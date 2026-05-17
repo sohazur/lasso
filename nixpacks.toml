@@ -8,7 +8,11 @@ nixPkgs = ["nodejs_20"]
 cmds = ["npm ci --workspaces --include-workspace-root"]
 
 [phases.build]
-cmds = ["npm run --workspace server build"]
+# Build the snippet first so /snippet.js can serve it, then the server TS.
+cmds = [
+  "npm run --workspace snippet build",
+  "npm run --workspace server build",
+]
 
 [start]
 cmd = "npm run --workspace server start"

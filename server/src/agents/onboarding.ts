@@ -104,6 +104,18 @@ async function runPipelineInBackground(req: OnboardRequest): Promise<void> {
   // the LLM-generated context, private notes, and (post-call) per-caller memory.
   const indexName = `merchant_${merchantId}`;
 
+  // Atomic-swap: delete the prior index (if any) before creating, so
+  // re-onboarding never bloats the project's index count. The Moss free tier
+  // caps index count, so this matters for repeat runs of the same merchant.
+  try {
+    if (await getMoss().hasIndex(indexName)) {
+      console.log(`[lasso] onboarding ${merchantId}: deleting prior Moss index`);
+      await getMoss().deleteIndex(indexName);
+    }
+  } catch (err) {
+    console.warn(`[lasso] onboarding ${merchantId}: pre-delete of existing Moss index failed (continuing)`, err);
+  }
+
   try {
     await getMoss().createIndex(
       indexName,
@@ -118,7 +130,7 @@ async function runPipelineInBackground(req: OnboardRequest): Promise<void> {
     await db.updateMerchant(merchantId, {
       status: "failed",
       failed_step: "indexing",
-      failed_reason: shortError(err),
+      failed_reason: friendlyMossError(err),
     });
     return;
   }
@@ -204,6 +216,17 @@ function safeHost(url: string): string | null {
 function shortError(err: unknown, max = 240): string {
   const raw = err instanceof Error ? err.message : String(err);
   return raw.replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function friendlyMossError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/UsageLimitExceeded|Index limit/i.test(raw)) {
+    return "Moss index quota exceeded for this project. Delete unused indexes in your Moss dashboard or upgrade the project, then retry.";
+  }
+  if (/401|Unauthorized|invalid api key/i.test(raw)) {
+    return "Moss rejected the credentials. Check MOSS_PROJECT_ID and MOSS_PROJECT_KEY on Railway.";
+  }
+  return shortError(err);
 }
 
 export async function getOnboardStatus(merchantId: string): Promise<MerchantRow | null> {

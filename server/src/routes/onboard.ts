@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { onboardMerchant, getOnboardStatus } from "../agents/onboarding.js";
+import { getMoss } from "../clients/moss.js";
 
 const OnboardBody = z.object({
   merchant_id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i, "alphanumeric + - _ only"),
@@ -30,4 +31,27 @@ export async function registerOnboardRoutes(app: FastifyInstance): Promise<void>
       name: merchant.name,
     });
   });
+
+  // Admin: list Moss indexes (so you can see what's eating your quota)
+  app.get("/api/admin/moss/indexes", async (_req, reply) => {
+    try {
+      const names = await getMoss().listIndexNames();
+      return reply.send({ indexes: names });
+    } catch (err) {
+      return reply.code(500).send({ error: (err as Error).message });
+    }
+  });
+
+  // Admin: delete a Moss index by name. Use to free quota for re-onboarding.
+  app.delete<{ Params: { name: string } }>(
+    "/api/admin/moss/indexes/:name",
+    async (req, reply) => {
+      try {
+        await getMoss().deleteIndex(req.params.name);
+        return reply.send({ ok: true, deleted: req.params.name });
+      } catch (err) {
+        return reply.code(500).send({ error: (err as Error).message });
+      }
+    },
+  );
 }

@@ -27,6 +27,7 @@ export interface MossSearchClient {
   query(indexName: string, q: string, topK?: number): Promise<MossSearchResult[]>;
   hasIndex(name: string): Promise<boolean>;
   deleteIndex(name: string): Promise<void>;
+  listIndexNames(): Promise<string[]>;
 }
 
 class MockMossClient implements MossSearchClient {
@@ -55,6 +56,10 @@ class MockMossClient implements MossSearchClient {
   async deleteIndex(name: string): Promise<void> {
     this.indexes.delete(name);
   }
+
+  async listIndexNames(): Promise<string[]> {
+    return Array.from(this.indexes.keys());
+  }
 }
 
 // Real Moss SDK wrapper. We avoid importing @moss-dev/moss here so the server
@@ -62,7 +67,13 @@ class MockMossClient implements MossSearchClient {
 class RealMossClient implements MossSearchClient {
   private mossInstance: unknown = null;
 
-  private async sdk(): Promise<{ createIndex: Function; loadIndex: Function; query: Function; deleteIndex?: Function }> {
+  private async sdk(): Promise<{
+    createIndex: Function;
+    loadIndex: Function;
+    query: Function;
+    deleteIndex: Function;
+    listIndexes: Function;
+  }> {
     if (this.mossInstance) return this.mossInstance as never;
     // Dynamic import so tsx doesn't choke if the package is missing
     try {
@@ -94,14 +105,25 @@ class RealMossClient implements MossSearchClient {
     }));
   }
 
-  async hasIndex(_name: string): Promise<boolean> {
-    // Moss SDK API for "does this index exist" — we cache create/load and
-    // catch errors from query as the existence test. Simpler placeholder:
-    return false;
+  async hasIndex(name: string): Promise<boolean> {
+    const names = await this.listIndexNames();
+    return names.includes(name);
   }
 
-  async deleteIndex(_name: string): Promise<void> {
-    console.warn("[lasso] moss deleteIndex: not implemented");
+  async deleteIndex(name: string): Promise<void> {
+    const client = await this.sdk();
+    await client.deleteIndex(name);
+  }
+
+  async listIndexNames(): Promise<string[]> {
+    const client = await this.sdk();
+    const res = (await client.listIndexes()) as
+      | Array<{ name?: string; indexName?: string }>
+      | { indexes?: Array<{ name?: string; indexName?: string }> };
+    const arr = Array.isArray(res) ? res : (res.indexes ?? []);
+    return arr
+      .map((i) => i.name ?? i.indexName)
+      .filter((n): n is string => typeof n === "string");
   }
 }
 
