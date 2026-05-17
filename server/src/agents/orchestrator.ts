@@ -10,7 +10,7 @@
  */
 
 import { getStore, type CallRow } from "../clients/supabase.js";
-import { getMemory } from "../clients/supermemory.js";
+import { getMemory, type MemoryRecord } from "../clients/supermemory.js";
 import { getAgentPhone } from "../clients/agentphone.js";
 import { getSharedAgent } from "./shared-agent.js";
 import { buildSystemPrompt } from "./system-prompt.js";
@@ -62,13 +62,32 @@ export async function triggerCall(event: AbandonmentEvent): Promise<{ call_id: s
     status: "preparing",
   });
 
-  // 3. Load memory in parallel
+  // 3. Load memory in parallel — best-effort. Memory failures must NOT
+  // block the call; the agent works without context (just less informed).
+  // Bounded by a 3s timeout so a hung Supermemory call can't strand the
+  // row in `preparing` forever.
   const mem = getMemory();
   const phoneTag = `merchant:${event.merchant_id}:phone:${normalizePhone(snap.phone)}`;
+  const memoryTimeoutMs = 3000;
+  function memGetSafe(tag: string, label: string): Promise<MemoryRecord[]> {
+    return Promise.race<MemoryRecord[]>([
+      mem.get(tag).catch((err) => {
+        console.warn(`[lasso] orchestrator: ${label} read failed (continuing)`, err);
+        return [] as MemoryRecord[];
+      }),
+      new Promise<MemoryRecord[]>((resolve) =>
+        setTimeout(() => {
+          console.warn(`[lasso] orchestrator: ${label} read timed out after ${memoryTimeoutMs}ms`);
+          resolve([]);
+        }, memoryTimeoutMs),
+      ),
+    ]);
+  }
+
   const [brandRecords, privateRecords, callerHistory] = await Promise.all([
-    mem.get(`merchant:${event.merchant_id}:context`),
-    mem.get(`merchant:${event.merchant_id}:private`),
-    mem.get(phoneTag),
+    memGetSafe(`merchant:${event.merchant_id}:context`, "brand context"),
+    memGetSafe(`merchant:${event.merchant_id}:private`, "private context"),
+    memGetSafe(phoneTag, "caller history"),
   ]);
 
   const brandContext = brandRecords[0] ?? null;
