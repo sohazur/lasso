@@ -67,15 +67,53 @@ export type PlaceCallResponse = {
   status: "queued" | "ringing" | "failed";
 };
 
+export type SendMessageRequest = {
+  agentId: string;
+  toNumber: string;
+  body: string;
+  numberId?: string;
+};
+
+export type SendMessageResponse = {
+  id?: string;
+  status?: string;
+};
+
+export type ListAgentsResponse = {
+  data: AgentResponse[];
+  hasMore?: boolean;
+};
+
+export type RegisterAgentWebhookRequest = {
+  url: string;
+  contextLimit?: number;
+  timeout?: number;
+};
+
+export type WebhookResponse = {
+  id: string;
+  url: string;
+  secret: string;
+  status: string;
+  contextLimit: number;
+  timeout: number;
+};
+
 export interface AgentPhoneClient {
+  listAgents(): Promise<AgentResponse[]>;
   createAgent(req: CreateAgentRequest): Promise<AgentResponse>;
   listNumbers(): Promise<ProvisionNumberResponse[]>;
   provisionNumber(): Promise<ProvisionNumberResponse>;
   attachNumber(agentId: string, numberId: string): Promise<AttachNumberResponse>;
   placeCall(req: PlaceCallRequest): Promise<PlaceCallResponse>;
+  sendMessage(req: SendMessageRequest): Promise<SendMessageResponse>;
+  registerAgentWebhook(agentId: string, req: RegisterAgentWebhookRequest): Promise<WebhookResponse>;
 }
 
 class MockAgentPhoneClient implements AgentPhoneClient {
+  async listAgents(): Promise<AgentResponse[]> {
+    return [];
+  }
   async createAgent(req: CreateAgentRequest): Promise<AgentResponse> {
     const id = `mock_agent_${Date.now()}`;
     console.log(`[lasso] agentphone MOCK createAgent → name="${req.name}" voiceMode=${req.voiceMode ?? "hosted"}`);
@@ -101,6 +139,21 @@ class MockAgentPhoneClient implements AgentPhoneClient {
     console.log(`[lasso] agentphone MOCK system prompt:\n${(req.systemPrompt ?? "").slice(0, 600)}…`);
     return { callId, status: "queued" };
   }
+  async sendMessage(req: SendMessageRequest): Promise<SendMessageResponse> {
+    console.log(`[lasso] agentphone MOCK sendMessage → to=${req.toNumber} body="${req.body.slice(0, 80)}"`);
+    return { id: `mock_msg_${Date.now()}`, status: "queued" };
+  }
+  async registerAgentWebhook(agentId: string, req: RegisterAgentWebhookRequest): Promise<WebhookResponse> {
+    console.log(`[lasso] agentphone MOCK registerAgentWebhook → agent=${agentId} url=${req.url}`);
+    return {
+      id: `mock_wh_${Date.now()}`,
+      url: req.url,
+      secret: "mock_secret_dont_use_in_real",
+      status: "active",
+      contextLimit: req.contextLimit ?? 10,
+      timeout: req.timeout ?? 30,
+    };
+  }
 }
 
 class RealAgentPhoneClient implements AgentPhoneClient {
@@ -120,6 +173,11 @@ class RealAgentPhoneClient implements AgentPhoneClient {
       throw new Error(`agentphone ${method} ${path} ${res.status}: ${text.slice(0, 600)}`);
     }
     return JSON.parse(text) as T;
+  }
+
+  async listAgents(): Promise<AgentResponse[]> {
+    const res = await this.request<ListAgentsResponse>("/agents", undefined, "GET");
+    return res.data ?? [];
   }
 
   async createAgent(req: CreateAgentRequest): Promise<AgentResponse> {
@@ -144,6 +202,20 @@ class RealAgentPhoneClient implements AgentPhoneClient {
     const callId = res.callId ?? res.id ?? "";
     const status = (res.status as "queued" | "ringing" | "failed") ?? "queued";
     return { callId, status };
+  }
+
+  async sendMessage(req: SendMessageRequest): Promise<SendMessageResponse> {
+    // Note: AgentPhone API uses snake_case for SendMessageRequest
+    return this.request<SendMessageResponse>("/messages", {
+      agent_id: req.agentId,
+      to_number: req.toNumber,
+      body: req.body,
+      number_id: req.numberId,
+    });
+  }
+
+  async registerAgentWebhook(agentId: string, req: RegisterAgentWebhookRequest): Promise<WebhookResponse> {
+    return this.request<WebhookResponse>(`/agents/${agentId}/webhook`, req);
   }
 }
 

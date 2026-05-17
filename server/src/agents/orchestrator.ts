@@ -12,7 +12,7 @@
 import { getStore, type CallRow } from "../clients/supabase.js";
 import { getMemory } from "../clients/supermemory.js";
 import { getAgentPhone } from "../clients/agentphone.js";
-import { env } from "../clients/config.js";
+import { getSharedAgent } from "./shared-agent.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
 export type AbandonmentEvent = {
@@ -88,16 +88,18 @@ export async function triggerCall(event: AbandonmentEvent): Promise<{ call_id: s
     callerHistory,
   });
 
-  // 5. Place the call (AgentPhone hosted mode — we pass the full system prompt per call)
-  if (!merchant.agentphone_agent_id) {
+  // 5. Place the call using the shared Lasso agent + number.
+  // Per-merchant brand context is in the systemPrompt for this specific call.
+  const shared = getSharedAgent();
+  if (!shared) {
     await db.updateCall(callRow.id, { status: "failed", outcome: "error" });
-    return { call_id: callRow.id, reason: "merchant_missing_agentphone_agent" };
+    return { call_id: callRow.id, reason: "shared_agent_not_initialized" };
   }
 
   const placement = await getAgentPhone().placeCall({
-    agentId: merchant.agentphone_agent_id,
+    agentId: shared.agentId,
     toNumber: snap.phone,
-    fromNumberId: merchant.agentphone_number_id ?? undefined,
+    fromNumberId: shared.numberId ?? undefined,
     systemPrompt,
     initialGreeting: snap.name ? `Hi ${snap.name}, quick call about your checkout — got a sec?` : undefined,
     variables: {

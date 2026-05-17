@@ -7,6 +7,7 @@ import cors from "@fastify/cors";
 import { registerOnboardRoutes } from "./routes/onboard.js";
 import { registerCheckoutEventRoute } from "./routes/checkout-event.js";
 import { registerAgentPhoneWebhook } from "./routes/webhooks/agentphone.js";
+import { ensureSharedAgent } from "./agents/shared-agent.js";
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 
@@ -32,3 +33,9 @@ await registerAgentPhoneWebhook(app);
 const port = Number(process.env.PORT ?? 3001);
 await app.listen({ port, host: "0.0.0.0" });
 app.log.info(`lasso server listening on :${port}`);
+
+// Provision the shared Lasso AgentPhone agent + register the webhook.
+// Done after listen() so health checks don't 500 during this potentially-slow step.
+ensureSharedAgent().catch((err) => {
+  app.log.error({ err }, "shared-agent bootstrap failed");
+});
