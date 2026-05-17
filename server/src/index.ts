@@ -43,27 +43,44 @@ app.get("/health", async () => ({ ok: true, service: "lasso-server" }));
 
 // Serve the compiled snippet bundle so merchants can <script src=".../snippet.js">.
 // We cache the file in memory after the first read; the bundle is tiny (~15KB).
-const SNIPPET_PATH = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../snippet/dist/index.global.js",
-);
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SNIPPET_CANDIDATES = [
+  // Local dev: server/dist/index.js → ../../snippet/dist/index.global.js
+  resolve(HERE, "../../snippet/dist/index.global.js"),
+  // Railway / Docker (cwd is /app): /app/snippet/dist/index.global.js
+  resolve(process.cwd(), "snippet/dist/index.global.js"),
+  // Fallback if nixpacks puts the snippet build under server/snippet
+  resolve(HERE, "../snippet/dist/index.global.js"),
+];
 let snippetCache: string | null = null;
+let snippetPath: string | null = null;
 async function readSnippet(): Promise<string | null> {
   if (snippetCache) return snippetCache;
-  try {
-    snippetCache = await readFile(SNIPPET_PATH, "utf8");
-    return snippetCache;
-  } catch (err) {
-    app.log.error({ err, path: SNIPPET_PATH }, "snippet.js not found on disk");
-    return null;
+  for (const candidate of SNIPPET_CANDIDATES) {
+    try {
+      snippetCache = await readFile(candidate, "utf8");
+      snippetPath = candidate;
+      app.log.info({ path: candidate, bytes: snippetCache.length }, "snippet.js loaded");
+      return snippetCache;
+    } catch {
+      // try the next candidate
+    }
   }
+  app.log.error({ tried: SNIPPET_CANDIDATES }, "snippet.js not found on disk");
+  return null;
 }
 app.get("/snippet.js", async (_req, reply) => {
   const body = await readSnippet();
-  if (!body) return reply.code(404).send("// snippet not built");
+  if (!body) {
+    return reply
+      .code(404)
+      .header("content-type", "text/plain")
+      .send(`// snippet not built. tried: ${SNIPPET_CANDIDATES.join(", ")}`);
+  }
   return reply
     .header("content-type", "application/javascript; charset=utf-8")
     .header("cache-control", "public, max-age=300")
+    .header("x-snippet-source", snippetPath ?? "unknown")
     .send(body);
 });
 

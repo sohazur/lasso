@@ -8,7 +8,7 @@
     "build": "tsup src/index.ts --format iife --global-name LassoSnippet --minify --out-dir dist",
     "typecheck": "tsc --noEmit"
   },
-  "devDependencies": {
+  "dependencies": {
     "tsup": "^8.0.0",
     "typescript": "^5.4.0"
   }
