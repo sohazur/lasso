@@ -44,12 +44,15 @@ app.get("/health", async () => ({ ok: true, service: "lasso-server" }));
 // Serve the compiled snippet bundle so merchants can <script src=".../snippet.js">.
 // We cache the file in memory after the first read; the bundle is tiny (~15KB).
 const HERE = dirname(fileURLToPath(import.meta.url));
+// All paths are anchored off this file's location so they don't depend on
+// the start command's cwd (Railway runs `npm run --workspace server start`
+// which sets cwd to /app/server, not /app).
 const SNIPPET_CANDIDATES = [
-  // Local dev: server/dist/index.js → ../../snippet/dist/index.global.js
+  // Standard layout: server/dist/index.js → ../../snippet/dist/index.global.js
   resolve(HERE, "../../snippet/dist/index.global.js"),
-  // Railway / Docker (cwd is /app): /app/snippet/dist/index.global.js
-  resolve(process.cwd(), "snippet/dist/index.global.js"),
-  // Fallback if nixpacks puts the snippet build under server/snippet
+  // Same monorepo, but if the server bundle lives one level deeper
+  resolve(HERE, "../../../snippet/dist/index.global.js"),
+  // Defensive: snippet built into the server workspace itself
   resolve(HERE, "../snippet/dist/index.global.js"),
 ];
 let snippetCache: string | null = null;
