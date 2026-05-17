@@ -7,6 +7,7 @@ import cors from "@fastify/cors";
 import rawBody from "fastify-raw-body";
 import { registerOnboardRoutes } from "./routes/onboard.js";
 import { registerCheckoutEventRoute } from "./routes/checkout-event.js";
+import { registerCallsRoutes } from "./routes/calls.js";
 import { registerAgentPhoneWebhook } from "./routes/webhooks/agentphone.js";
 import { registerAgentPhoneTurnWebhook } from "./routes/webhooks/agentphone-turn.js";
 import { ensureSharedAgent } from "./agents/shared-agent.js";
@@ -39,6 +40,7 @@ app.get("/health", async () => ({ ok: true, service: "lasso-server" }));
 
 await registerOnboardRoutes(app);
 await registerCheckoutEventRoute(app);
+await registerCallsRoutes(app);
 await registerAgentPhoneWebhook(app);
 await registerAgentPhoneTurnWebhook(app);
 
