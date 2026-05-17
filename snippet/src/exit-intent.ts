@@ -42,7 +42,6 @@ export function startAbandonmentWatch(
 
   function isFireable(snap: CheckoutSnapshot, trigger: AbandonTrigger): boolean {
     if (trigger === "manual") return true; // bypass guards for manual escape hatch
-    if (!snap.consent_given) return false;
     if (!snap.phone || !looksLikePhone(snap.phone)) return false;
     if (typeof snap.cart_total_cents === "number" && snap.cart_total_cents < MIN_CART_TOTAL_CENTS) return false;
     return true;

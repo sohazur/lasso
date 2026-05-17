@@ -14,7 +14,6 @@
 
 import { detectCheckout } from "./checkout-detector.js";
 import { startWatcher, type CheckoutSnapshot } from "./form-watcher.js";
-import { mountConsentBanner } from "./consent-banner.js";
 import { startAbandonmentWatch, type AbandonTrigger } from "./exit-intent.js";
 import { sendCheckoutEvent } from "./client.js";
 
@@ -74,12 +73,6 @@ function init(): void {
     console.log("[lasso] snapshot:", summarizeSnapshot(snap));
   });
 
-  const consent = mountConsentBanner(watcher.getSnapshot().store_name, (consented) => {
-    const snap = watcher.getSnapshot();
-    snap.consent_given = consented;
-    console.log("[lasso] consent:", consented);
-  });
-
   const abandonment = startAbandonmentWatch(
     () => watcher.getSnapshot(),
     (trigger, snap) => {
@@ -96,7 +89,6 @@ function init(): void {
 
   // Cleanup if the page is unloaded normally (best effort)
   window.addEventListener("pagehide", () => {
-    consent.destroy();
     watcher.stop();
     abandonment.stop();
   }, { once: true });
@@ -112,7 +104,6 @@ function summarizeSnapshot(snap: CheckoutSnapshot): Record<string, unknown> {
     country: snap.country,
     cart: snap.cart_lines.length,
     total_cents: snap.cart_total_cents,
-    consent: snap.consent_given,
   };
 }
 

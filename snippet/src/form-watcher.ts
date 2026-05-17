@@ -27,7 +27,6 @@ export type CheckoutSnapshot = {
   store_url: string;
   store_name?: string;
   detected_platform: CheckoutPlatform;
-  consent_given: boolean;
   page_entered_at: number;
 };
 
@@ -44,7 +43,6 @@ export function startWatcher(platform: CheckoutPlatform, onUpdate?: (snap: Check
     store_url: window.location.origin,
     store_name: readStoreName() ?? undefined,
     detected_platform: platform,
-    consent_given: false,
     page_entered_at: Date.now(),
   };
 
