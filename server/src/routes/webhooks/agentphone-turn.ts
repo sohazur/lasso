@@ -41,10 +41,12 @@ import { getAgentPhone } from "../../clients/agentphone.js";
 import {
   getStore,
   type CallRow,
+  type MerchantRow,
   type ObjectionType,
   type PendingActionType,
 } from "../../clients/supabase.js";
 import { getSharedAgent } from "../../agents/shared-agent.js";
+import { placeFounderCall } from "../../agents/founder-call.js";
 
 const PENDING_TTL_MS = 60_000;
 
@@ -219,7 +221,7 @@ async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
 
   // 5. Execute the action. May mutate call state, fire side effects (SMS,
   // outbound calls), and shape the response we return to AgentPhone.
-  return executeAction(call, merchant.id, parsed);
+  return executeAction(call, merchant, parsed);
 }
 
 /**
@@ -245,11 +247,12 @@ function readPending(call: CallRow): {
 
 async function executeAction(
   call: CallRow,
-  merchantId: string,
+  merchant: MerchantRow,
   parsed: ParsedTurn
 ): Promise<TurnResponse> {
   const db = getStore();
   const text = parsed.text || "Got it.";
+  const merchantId = merchant.id;
 
   // Always persist the latest objection diagnosis (if non-null). Monotonic:
   // once the LLM commits to a tag we keep it on the row.
@@ -310,21 +313,42 @@ async function executeAction(
     }
 
     case "notify_founder": {
-      // Placeholder. The actual outbound call to the founder is wired in
-      // commit #6 on this branch. For now record intent on the row so the
-      // dashboard reflects what the agent attempted to do, and let the
-      // customer-side agent speak its "I'll loop the founder in" sentence.
-      const params = {
-        what_customer_wants: parsed.action.what_customer_wants ?? null,
-        blocker: parsed.action.blocker ?? null,
-      };
-      await db.updateCall(call.id, {
-        pending_action_type: "notify_founder",
-        pending_action_params: params,
-        pending_action_set_at: new Date().toISOString(),
+      // Defense in depth: the prompt gates this on hasFounderPhone, but if
+      // the LLM picks it anyway when we can't dial, just speak the text and
+      // don't hang up — gives the customer a chance to redirect.
+      if (!merchant.founder_phone) {
+        console.warn(`[lasso] notify_founder on merchant=${merchantId} without founder_phone — speaking only`);
+        return { text };
+      }
+
+      // Place the founder call (synchronously — AgentPhone usually responds
+      // in <2s and the customer is mid-sentence listening to the agent's
+      // text). On success we link it via founder_call_id and clean up any
+      // stale pending state from prior turns.
+      const founderCallId = await placeFounderCall({
+        customerCall: call,
+        merchant,
+        whatCustomerWants: parsed.action.what_customer_wants,
+        blocker: parsed.action.blocker,
       });
-      console.log(`[lasso] action notify_founder queued on call=${call.id} params=${JSON.stringify(params)}`);
-      return { text };
+
+      await db.updateCall(call.id, {
+        founder_call_id: founderCallId,
+        pending_action_type: null,
+        pending_action_params: null,
+        pending_action_set_at: null,
+      });
+
+      console.log(
+        `[lasso] notify_founder: customer_call=${call.id} → founder_call=${founderCallId ?? "(placement failed)"}`
+      );
+
+      // End the customer call cleanly. The agent promised follow-up (the
+      // LLM was told to say "your store owner is being looped in"); a
+      // separate flow texts the customer once the founder approves.
+      // Hanging up here is the demo-friendly choice — the stage moment is
+      // "the founder's phone literally rings within seconds."
+      return { text, hangup: true };
     }
 
     case "escalate_human":
