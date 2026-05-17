@@ -53,34 +53,51 @@ export function startWatcher(platform: CheckoutPlatform, onUpdate?: (snap: Check
   }
 
   function readFormState(): void {
-    snapshot.phone = readInputValue([
-      'input[autocomplete="tel"]',
-      'input[autocomplete="tel-national"]',
-      'input[type="tel"]',
-    ]);
-    snapshot.email = readInputValue([
-      'input[autocomplete="email"]',
-      'input[type="email"]',
-    ]);
-    snapshot.name = readName();
-    snapshot.street_address = readInputValue([
-      'input[autocomplete="street-address"]',
-      'input[autocomplete="address-line1"]',
-    ]);
-    snapshot.city = readInputValue(['input[autocomplete="address-level2"]']);
-    snapshot.state = readInputValue(['input[autocomplete="address-level1"]']);
-    snapshot.postal_code = readInputValue([
-      'input[autocomplete="postal-code"]',
-      'input[autocomplete="zip"]',
-    ]);
-    snapshot.country = readInputValue([
-      'input[autocomplete="country-name"]',
-      'input[autocomplete="country"]',
-      'select[autocomplete="country"]',
-    ]);
+    // Sticky merge: once we've captured a value, keep it even if the input
+    // is later unmounted. Critical for multi-step SPA checkouts (Saaya,
+    // Shopify multi-page, Stripe Checkout's separate routes) where Step 2's
+    // form vanishes from the DOM when the user advances to Step 3. Without
+    // this, phone/email are wiped to undefined and abandonment-fire gating
+    // (`if (!snap.phone) return false`) silently kills the recovery call.
+    snapshot.phone =
+      readInputValue([
+        'input[autocomplete="tel"]',
+        'input[autocomplete="tel-national"]',
+        'input[type="tel"]',
+      ]) ?? snapshot.phone;
+    snapshot.email =
+      readInputValue([
+        'input[autocomplete="email"]',
+        'input[type="email"]',
+      ]) ?? snapshot.email;
+    snapshot.name = readName() ?? snapshot.name;
+    snapshot.street_address =
+      readInputValue([
+        'input[autocomplete="street-address"]',
+        'input[autocomplete="address-line1"]',
+      ]) ?? snapshot.street_address;
+    snapshot.city =
+      readInputValue(['input[autocomplete="address-level2"]']) ?? snapshot.city;
+    snapshot.state =
+      readInputValue(['input[autocomplete="address-level1"]']) ?? snapshot.state;
+    snapshot.postal_code =
+      readInputValue([
+        'input[autocomplete="postal-code"]',
+        'input[autocomplete="zip"]',
+      ]) ?? snapshot.postal_code;
+    snapshot.country =
+      readInputValue([
+        'input[autocomplete="country-name"]',
+        'input[autocomplete="country"]',
+        'select[autocomplete="country"]',
+      ]) ?? snapshot.country;
     const cart = readCart(platform);
-    snapshot.cart_lines = cart.lines;
-    snapshot.cart_total_cents = cart.total_cents;
+    // Only overwrite cart if we found one — a mid-route DOM teardown
+    // shouldn't blank out the cart we already captured on a prior tick.
+    if (cart.lines.length > 0) snapshot.cart_lines = cart.lines;
+    if (typeof cart.total_cents === "number" && cart.total_cents > 0) {
+      snapshot.cart_total_cents = cart.total_cents;
+    }
     publish();
   }
 
