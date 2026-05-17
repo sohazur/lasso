@@ -45,15 +45,23 @@ function readConfig(): LassoConfig | null {
 }
 
 function init(): void {
+  // DEBUG: visible heartbeat so we know the script booted, independent of console
+  paintHeartbeat("loading");
+
   const config = readConfig();
-  if (!config) return;
+  if (!config) {
+    paintHeartbeat("no-config");
+    return;
+  }
 
   const detection = detectCheckout();
   if (!detection.isCheckout) {
+    paintHeartbeat("not-checkout");
     console.debug("[lasso] not a checkout page, standing down");
     return;
   }
 
+  paintHeartbeat("checkout-detected");
   console.log(
     `[lasso] checkout detected (${detection.platform}, ${detection.confidence}): ${detection.reason}`
   );
@@ -102,6 +110,21 @@ function summarizeSnapshot(snap: CheckoutSnapshot): Record<string, unknown> {
     total_cents: snap.cart_total_cents,
     consent: snap.consent_given,
   };
+}
+
+function paintHeartbeat(state: string): void {
+  const id = "lasso-heartbeat";
+  let dot = document.getElementById(id);
+  if (!dot) {
+    dot = document.createElement("div");
+    dot.id = id;
+    dot.style.cssText =
+      "position:fixed;top:8px;right:8px;z-index:2147483647;padding:6px 10px;font:11px/1.2 ui-monospace,Menlo,monospace;background:#000;color:#fff;border-radius:4px;pointer-events:none;";
+    document.body?.appendChild(dot);
+  }
+  dot.textContent = `lasso: ${state}`;
+  dot.style.background =
+    state === "checkout-detected" ? "#16a34a" : state === "loading" ? "#0ea5e9" : "#dc2626";
 }
 
 if (document.readyState === "loading") {
