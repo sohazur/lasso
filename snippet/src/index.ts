@@ -4,17 +4,33 @@
  * Boot path:
  *   1. Read merchant_id from <script data-merchant="...">
  *   2. Detect if this page is a checkout (heuristics)
- *   3. If yes: attach form watcher, log snapshot deltas
- *      (consent banner, exit-intent, event sender wire in next)
+ *   3. Mount consent banner (slide-down)
+ *   4. Start form watcher (phone/email/name/address/cart capture)
+ *   5. Arm abandonment triggers (exit-intent / idle / tab-hidden)
+ *   6. On abandonment + consent + valid phone: POST event to server
+ *
+ * Also exposes window.Lasso.fire() as a manual escape hatch for stage demos.
  */
 
 import { detectCheckout } from "./checkout-detector.js";
 import { startWatcher, type CheckoutSnapshot } from "./form-watcher.js";
+import { mountConsentBanner } from "./consent-banner.js";
+import { startAbandonmentWatch, type AbandonTrigger } from "./exit-intent.js";
+import { sendCheckoutEvent } from "./client.js";
 
 type LassoConfig = {
   merchantId: string;
   serverUrl: string;
 };
+
+declare global {
+  interface Window {
+    Lasso?: {
+      fire: (trigger?: AbandonTrigger) => void;
+      snapshot: () => CheckoutSnapshot | null;
+    };
+  }
+}
 
 function readConfig(): LassoConfig | null {
   const script = document.currentScript as HTMLScriptElement | null;
@@ -42,19 +58,50 @@ function init(): void {
     `[lasso] checkout detected (${detection.platform}, ${detection.confidence}): ${detection.reason}`
   );
 
-  startWatcher(detection.platform, (snap: CheckoutSnapshot) => {
-    console.log("[lasso] snapshot:", {
-      phone: snap.phone,
-      email: snap.email,
-      name: snap.name,
-      cart: snap.cart_lines.length,
-      total_cents: snap.cart_total_cents,
-    });
+  const watcher = startWatcher(detection.platform, (snap) => {
+    console.log("[lasso] snapshot:", summarizeSnapshot(snap));
   });
 
-  // TODO: consent-banner.ts — slide-in opt-in UI
-  // TODO: exit-intent.ts — mouse-toward-chrome + idle + visibility triggers
-  // TODO: client.ts — POST /checkout-event via sendBeacon
+  const consent = mountConsentBanner(watcher.getSnapshot().store_name, (consented) => {
+    const snap = watcher.getSnapshot();
+    snap.consent_given = consented;
+    console.log("[lasso] consent:", consented);
+  });
+
+  const abandonment = startAbandonmentWatch(
+    () => watcher.getSnapshot(),
+    (trigger, snap) => {
+      console.log(`[lasso] abandonment fired (${trigger})`, summarizeSnapshot(snap));
+      sendCheckoutEvent(config.serverUrl, config.merchantId, trigger, snap);
+    }
+  );
+
+  // Expose a stage-safe manual fire button.
+  window.Lasso = {
+    fire: (trigger: AbandonTrigger = "manual") => abandonment.fire(trigger),
+    snapshot: () => watcher.getSnapshot(),
+  };
+
+  // Cleanup if the page is unloaded normally (best effort)
+  window.addEventListener("pagehide", () => {
+    consent.destroy();
+    watcher.stop();
+    abandonment.stop();
+  }, { once: true });
+}
+
+function summarizeSnapshot(snap: CheckoutSnapshot): Record<string, unknown> {
+  return {
+    phone: snap.phone,
+    email: snap.email,
+    name: snap.name,
+    address: snap.street_address,
+    city: snap.city,
+    country: snap.country,
+    cart: snap.cart_lines.length,
+    total_cents: snap.cart_total_cents,
+    consent: snap.consent_given,
+  };
 }
 
 if (document.readyState === "loading") {

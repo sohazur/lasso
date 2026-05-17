@@ -17,6 +17,11 @@ export type CheckoutSnapshot = {
   phone?: string;
   email?: string;
   name?: string;
+  street_address?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
   cart_lines: CartLine[];
   cart_total_cents?: number;
   store_url: string;
@@ -60,6 +65,21 @@ export function startWatcher(platform: CheckoutPlatform, onUpdate?: (snap: Check
       'input[type="email"]',
     ]);
     snapshot.name = readName();
+    snapshot.street_address = readInputValue([
+      'input[autocomplete="street-address"]',
+      'input[autocomplete="address-line1"]',
+    ]);
+    snapshot.city = readInputValue(['input[autocomplete="address-level2"]']);
+    snapshot.state = readInputValue(['input[autocomplete="address-level1"]']);
+    snapshot.postal_code = readInputValue([
+      'input[autocomplete="postal-code"]',
+      'input[autocomplete="zip"]',
+    ]);
+    snapshot.country = readInputValue([
+      'input[autocomplete="country-name"]',
+      'input[autocomplete="country"]',
+      'select[autocomplete="country"]',
+    ]);
     const cart = readCart(platform);
     snapshot.cart_lines = cart.lines;
     snapshot.cart_total_cents = cart.total_cents;
