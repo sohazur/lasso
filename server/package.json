@@ -14,7 +14,7 @@
     "@supabase/supabase-js": "^2.105.4",
     "dotenv": "^16.4.0",
     "fastify": "^4.28.0",
-    "fastify-raw-body": "^5.0.0",
+    "fastify-raw-body": "^4.3.0",
     "openai": "^6.38.0",
     "pino": "^9.0.0",
     "zod": "^3.23.0"
