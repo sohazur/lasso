@@ -34,26 +34,36 @@ export function sendCheckoutEvent(
   const url = `${serverUrl.replace(/\/$/, "")}/checkout-event`;
   const body = JSON.stringify(payload);
 
-  // sendBeacon is the only thing that reliably survives unload
+  // Use text/plain so the request is a "simple" CORS request — no preflight.
+  // Why this matters: sendBeacon and fetch-with-keepalive during unload both
+  // silently fail if the browser needs to do a preflight first. The server
+  // route parses the body as JSON regardless of Content-Type.
+  const contentType = "text/plain;charset=UTF-8";
+
   if (typeof navigator.sendBeacon === "function") {
     try {
-      const blob = new Blob([body], { type: "application/json" });
+      const blob = new Blob([body], { type: contentType });
       const ok = navigator.sendBeacon(url, blob);
+      console.log("[lasso] sendCheckoutEvent → sendBeacon ok=", ok);
       if (ok) return true;
-    } catch { /* fall through to fetch */ }
+    } catch (err) {
+      console.warn("[lasso] sendBeacon threw, falling back to fetch", err);
+    }
   }
 
-  // Fallback: fetch keepalive (works on modern browsers even during unload)
   try {
     fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": contentType },
       body,
       keepalive: true,
       mode: "cors",
-    }).catch(() => { /* swallow — fire and forget */ });
+    })
+      .then((r) => console.log("[lasso] sendCheckoutEvent → fetch status=", r.status))
+      .catch((err) => console.warn("[lasso] sendCheckoutEvent fetch error", err));
     return true;
-  } catch {
+  } catch (err) {
+    console.error("[lasso] sendCheckoutEvent fatal", err);
     return false;
   }
 }

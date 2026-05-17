@@ -12,6 +12,17 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 
 await app.register(cors, { origin: true });
 
+// Snippet posts as text/plain so the browser treats it as a "simple" CORS
+// request (no preflight). sendBeacon and fetch-with-keepalive both silently
+// drop the body if a preflight is required during page unload.
+app.addContentTypeParser("text/plain", { parseAs: "string" }, (_req, body, done) => {
+  try {
+    done(null, body && (body as string).length > 0 ? JSON.parse(body as string) : {});
+  } catch (err) {
+    done(err as Error, undefined);
+  }
+});
+
 app.get("/health", async () => ({ ok: true, service: "lasso-server" }));
 
 await registerOnboardRoutes(app);
