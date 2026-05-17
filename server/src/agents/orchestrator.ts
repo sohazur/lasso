@@ -93,46 +93,82 @@ export async function triggerCall(event: AbandonmentEvent): Promise<{ call_id: s
   const brandContext = brandRecords[0] ?? null;
   const privateContext = privateRecords[0] ?? null;
 
-  // 4. Build system prompt
-  const systemPrompt = buildSystemPrompt({
-    storeName: merchant.name,
-    customerName: snap.name,
-    phone: snap.phone,
-    cartLines: snap.cart_lines ?? [],
-    cartTotalCents: snap.cart_total_cents,
-    checkoutResumeUrl: event.page_url,
-    secondsSinceLeft: secondsSince(snap.page_entered_at ?? event.fired_at),
-    brandContext,
-    privateContext,
-    callerHistory,
-  });
+  // Everything after the row insert must either succeed or mark the row
+  // `failed` — otherwise an unhandled throw strands it at `preparing`
+  // forever with no visible reason.
+  try {
+    // 4. Build system prompt
+    console.log(`[lasso] orchestrator ${callRow.id}: building system prompt`);
+    const systemPrompt = buildSystemPrompt({
+      storeName: merchant.name,
+      customerName: snap.name,
+      phone: snap.phone,
+      cartLines: snap.cart_lines ?? [],
+      cartTotalCents: snap.cart_total_cents,
+      checkoutResumeUrl: event.page_url,
+      secondsSinceLeft: secondsSince(snap.page_entered_at ?? event.fired_at),
+      brandContext,
+      privateContext,
+      callerHistory,
+    });
 
-  // 5. Place the call using the shared Lasso agent + number.
-  // Per-merchant brand context is in the systemPrompt for this specific call.
-  const shared = getSharedAgent();
-  if (!shared) {
-    await db.updateCall(callRow.id, { status: "failed", outcome: "error" });
-    return { call_id: callRow.id, reason: "shared_agent_not_initialized" };
+    // 5. Place the call using the shared Lasso agent + number.
+    const shared = getSharedAgent();
+    if (!shared) {
+      console.error(`[lasso] orchestrator ${callRow.id}: shared agent not initialized`);
+      await db.updateCall(callRow.id, { status: "failed", outcome: "error" });
+      return { call_id: callRow.id, reason: "shared_agent_not_initialized" };
+    }
+
+    console.log(
+      `[lasso] orchestrator ${callRow.id}: calling AgentPhone.placeCall to=${snap.phone} agent=${shared.agentId}`,
+    );
+
+    // Hard timeout so a hung AgentPhone HTTP request can't strand the row.
+    const PLACE_CALL_TIMEOUT_MS = 15_000;
+    const placement = await Promise.race([
+      getAgentPhone().placeCall({
+        agentId: shared.agentId,
+        toNumber: snap.phone,
+        fromNumberId: shared.numberId ?? undefined,
+        systemPrompt,
+        initialGreeting: snap.name ? `Hi ${snap.name}, quick call about your checkout — got a sec?` : undefined,
+        variables: {
+          customer_name: snap.name ?? "there",
+          cart_total:
+            typeof snap.cart_total_cents === "number"
+              ? `$${(snap.cart_total_cents / 100).toFixed(2)}`
+              : "",
+        },
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`placeCall timed out after ${PLACE_CALL_TIMEOUT_MS}ms`)),
+          PLACE_CALL_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+
+    console.log(
+      `[lasso] orchestrator ${callRow.id}: placement returned status=${placement.status} callId=${placement.callId}`,
+    );
+
+    await db.updateCall(callRow.id, {
+      agentphone_call_id: placement.callId,
+      status: placement.status === "failed" ? "failed" : "ringing",
+    });
+
+    return { call_id: callRow.id };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[lasso] orchestrator ${callRow.id}: pipeline threw — ${msg}`, err);
+    await db.updateCall(callRow.id, {
+      status: "failed",
+      outcome: "error",
+      failed_reason: msg.slice(0, 500),
+    });
+    return { call_id: callRow.id, reason: msg };
   }
-
-  const placement = await getAgentPhone().placeCall({
-    agentId: shared.agentId,
-    toNumber: snap.phone,
-    fromNumberId: shared.numberId ?? undefined,
-    systemPrompt,
-    initialGreeting: snap.name ? `Hi ${snap.name}, quick call about your checkout — got a sec?` : undefined,
-    variables: {
-      customer_name: snap.name ?? "there",
-      cart_total: typeof snap.cart_total_cents === "number" ? `$${(snap.cart_total_cents / 100).toFixed(2)}` : "",
-    },
-  });
-
-  await db.updateCall(callRow.id, {
-    agentphone_call_id: placement.callId,
-    status: placement.status === "failed" ? "failed" : "ringing",
-  });
-
-  return { call_id: callRow.id };
 }
 
 function secondsSince(ms?: number): number {

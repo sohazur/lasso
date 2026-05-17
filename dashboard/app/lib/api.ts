@@ -81,6 +81,7 @@ export type CallRow = {
   trigger: string | null;
   status: "preparing" | "ringing" | "connected" | "completed" | "failed" | "no_answer";
   outcome: "recovered" | "declined" | "unreachable" | "error" | null;
+  failed_reason: string | null;
   agentphone_call_id: string | null;
   transcript: string | null;
   duration_secs: number | null;

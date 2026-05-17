@@ -31,6 +31,7 @@ create table if not exists calls (
   trigger text,
   status text,
   outcome text,
+  failed_reason text,
   agentphone_call_id text,
   transcript text,
   duration_secs integer,
@@ -38,6 +39,9 @@ create table if not exists calls (
   created_at timestamptz default now(),
   ended_at timestamptz
 );
+
+-- Backfill column if the table already exists from a prior schema run
+alter table calls add column if not exists failed_reason text;
 
 create index if not exists calls_merchant_status_idx on calls(merchant_id, status, created_at desc);
 create index if not exists calls_phone_merchant_idx on calls(merchant_id, phone);

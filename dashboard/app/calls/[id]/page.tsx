@@ -225,6 +225,24 @@ function SummaryCard({ call }: { call: CallRow }) {
     <div className="lasso-call-card">
       <h2>Summary</h2>
       <p className="lasso-summary-line">{summary.line}</p>
+      {call.failed_reason && (
+        <pre
+          style={{
+            margin: "12px 0 0",
+            padding: "10px 12px",
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            borderRadius: 10,
+            color: "#7f1d1d",
+            fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
+            fontSize: 12,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {call.failed_reason}
+        </pre>
+      )}
       {summary.tags.length > 0 && (
         <div className="lasso-summary-meta">
           {summary.tags.map((t) => (
@@ -252,7 +270,9 @@ function deriveSummary(call: CallRow): { line: string; tags: SummaryTag[] } {
   } else if (call.status === "no_answer") {
     line = "Customer didn't pick up. Recommend SMS follow-up.";
   } else if (call.status === "failed") {
-    line = "Call failed before connecting. Check AgentPhone logs.";
+    line = call.failed_reason
+      ? "Call failed before connecting. See error below."
+      : "Call failed before connecting. Check AgentPhone logs.";
   } else if (call.status === "completed") {
     if (call.outcome === "recovered") {
       line = `Customer agreed to complete the purchase${

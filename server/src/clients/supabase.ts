@@ -48,6 +48,7 @@ export type CallRow = {
   trigger?: string | null;
   status: CallStatus;
   outcome?: CallOutcome;
+  failed_reason?: string | null;
   agentphone_call_id?: string | null;
   transcript?: string | null;
   duration_secs?: number | null;
