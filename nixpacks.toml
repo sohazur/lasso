@@ -2,7 +2,7 @@
 # Repo root contains an npm workspaces monorepo; Railway builds at the root.
 
 [phases.setup]
-nixPkgs = ["nodejs_20", "npm"]
+nixPkgs = ["nodejs_20"]
 
 [phases.install]
 cmds = ["npm ci --workspaces --include-workspace-root"]
