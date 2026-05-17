@@ -22,9 +22,38 @@ export type MerchantRow = {
   agentphone_agent_id?: string | null;
   agentphone_number_id?: string | null;
   agentphone_phone_number?: string | null;
+  // Set by the merchant (or hardcoded for demo) so notify_founder can dial
+  // the right person mid-call. Both optional — without them the founder
+  // tool is a no-op rather than a failure.
+  founder_name?: string | null;
+  founder_phone?: string | null;
   created_at?: string;
   updated_at?: string;
 };
+
+/** Distinguishes a customer-recovery call from a founder-approval call. */
+export type CallKind = "customer" | "founder_approval";
+
+/**
+ * One of the structured actions the closer agent can queue. When set, the
+ * NEXT inbound turn from the customer is expected to confirm/cancel.
+ * Cleared once acted upon or once the watchdog expires (60s).
+ */
+export type PendingActionType = "propose_payment_link" | "notify_founder";
+
+/** Tags the diagnosed reason for abandonment on each turn. */
+export type ObjectionType =
+  | "color"
+  | "size"
+  | "fit"
+  | "shipping"
+  | "price"
+  | "compatibility"
+  | "trust"
+  | "other";
+
+/** Founder's verbal answer on an approval call. */
+export type FounderDecision = "approved" | "denied" | "callback";
 
 export type CallStatus =
   | "preparing"
@@ -54,6 +83,41 @@ export type CallRow = {
   recovered_cents?: number | null;
   created_at?: string;
   ended_at?: string | null;
+
+  // ─── proactive-closer additions ────────────────────────────────────────
+  /**
+   * 'customer' (default) for the customer-recovery call. 'founder_approval'
+   * for calls the notify_founder tool places to the merchant's founder.
+   * The webhook turn handler branches on this to pick the right prompt.
+   */
+  kind?: CallKind | null;
+
+  /**
+   * Pending two-turn handshake state. When the agent emits a propose_*
+   * action it gets stored here; the next inbound turn from the customer
+   * is expected to confirm/cancel. Cleared after the action fires OR
+   * after pending_action_set_at is older than 60s (watchdog).
+   */
+  pending_action_type?: PendingActionType | null;
+  pending_action_params?: Record<string, unknown> | null;
+  pending_action_set_at?: string | null;
+
+  /**
+   * The diagnosed reason for abandonment as inferred by the LLM each turn.
+   * Stored monotonically — the latest non-null value sticks. Dashboard
+   * groups by this for the "why are we losing deals" breakdown.
+   */
+  objection_type?: ObjectionType | null;
+
+  /**
+   * Set on a customer call when notify_founder placed an outbound founder
+   * call. Points at the founder_approval row's id. The founder's verbal
+   * response is captured on that row and read back here when the customer
+   * follow-up fires (separate branch — out of scope for v1).
+   */
+  founder_call_id?: string | null;
+  founder_decision?: FounderDecision | null;
+  founder_decision_note?: string | null;
 };
 
 export interface DataStore {

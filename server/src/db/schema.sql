@@ -54,3 +54,38 @@ create table if not exists stripe_attributions (
 insert into merchants (id, name, primary_domain)
 values ('demo', 'Lasso Demo Store', 'localhost:5500')
 on conflict (id) do nothing;
+
+-- ─── proactive-closer additions ──────────────────────────────────────────
+-- The closer agent emits a structured action each turn and may queue a
+-- pending action (e.g. propose_payment_link) that requires a verbal
+-- confirmation from the customer on the *next* turn. Foyer's submitForm
+-- pattern, adapted for phone calls.
+alter table calls add column if not exists pending_action_type text;
+alter table calls add column if not exists pending_action_params jsonb;
+alter table calls add column if not exists pending_action_set_at timestamptz;
+
+-- Per-turn objection tag — gives the dashboard a "why are we losing deals"
+-- breakdown without manual transcript review.
+alter table calls add column if not exists objection_type text;
+-- Suggested values: color | size | fit | shipping | price | compatibility |
+-- trust | other. Enforced at the application layer (LLM emits one of these).
+
+-- Distinguishes customer-recovery calls from founder-approval calls placed
+-- by the notify_founder tool. Same `calls` table for both, because both
+-- route through the shared AgentPhone agent + webhook turn handler.
+alter table calls add column if not exists kind text default 'customer';
+-- Suggested values: 'customer' | 'founder_approval'
+
+-- Links a customer call to the founder call placed on its behalf.
+alter table calls add column if not exists founder_call_id uuid references calls(id);
+alter table calls add column if not exists founder_decision text;
+-- Suggested values: 'approved' | 'denied' | 'callback' | null
+alter table calls add column if not exists founder_decision_note text;
+
+-- Founder contact info on the merchant row.
+alter table merchants add column if not exists founder_name text;
+alter table merchants add column if not exists founder_phone text;
+
+create index if not exists calls_pending_action_idx
+  on calls(merchant_id, pending_action_type) where pending_action_type is not null;
+create index if not exists calls_kind_status_idx on calls(kind, status);
