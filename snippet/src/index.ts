@@ -32,8 +32,20 @@ declare global {
   }
 }
 
+// Capture our <script> element at module-execution time.
+// document.currentScript is only valid during top-level execution —
+// inside DOMContentLoaded callbacks it returns null.
+const SELF_SCRIPT = (document.currentScript as HTMLScriptElement | null) ?? findSelfScript();
+
+function findSelfScript(): HTMLScriptElement | null {
+  // Fallback: look for any script tag carrying data-merchant.
+  // Works when currentScript isn't available (e.g., loaded async or via DOMContentLoaded path).
+  const candidates = document.querySelectorAll<HTMLScriptElement>("script[data-merchant]");
+  return candidates[candidates.length - 1] ?? null;
+}
+
 function readConfig(): LassoConfig | null {
-  const script = document.currentScript as HTMLScriptElement | null;
+  const script = SELF_SCRIPT;
   if (!script) return null;
   const merchantId = script.dataset.merchant;
   if (!merchantId) {
