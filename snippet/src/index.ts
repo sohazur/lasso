@@ -12,7 +12,7 @@
  * Also exposes window.Lasso.fire() as a manual escape hatch for stage demos.
  */
 
-import { detectCheckout } from "./checkout-detector.js";
+import { watchForCheckout } from "./checkout-detector.js";
 import { startWatcher, type CheckoutSnapshot } from "./form-watcher.js";
 import { startAbandonmentWatch, type AbandonTrigger } from "./exit-intent.js";
 import { sendCheckoutEvent } from "./client.js";
@@ -59,15 +59,18 @@ function init(): void {
   const config = readConfig();
   if (!config) return;
 
-  const detection = detectCheckout();
-  if (!detection.isCheckout) {
-    console.debug("[lasso] not a checkout page, standing down");
-    return;
-  }
+  // Use watchForCheckout (not the one-shot detectCheckout) so SPA sites that
+  // render the checkout form after a route change still get picked up. The
+  // callback fires exactly once when detection succeeds.
+  watchForCheckout((detection) => {
+    console.log(
+      `[lasso] checkout detected (${detection.platform}, ${detection.confidence}): ${detection.reason}`
+    );
+    bootSnippet(detection, config);
+  });
+}
 
-  console.log(
-    `[lasso] checkout detected (${detection.platform}, ${detection.confidence}): ${detection.reason}`
-  );
+function bootSnippet(detection: { platform: import("./checkout-detector.js").CheckoutPlatform }, config: LassoConfig): void {
 
   const watcher = startWatcher(detection.platform, (snap) => {
     console.log("[lasso] snapshot:", summarizeSnapshot(snap));
