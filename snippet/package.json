@@ -1,0 +1,15 @@
+{
+  "name": "@lasso/snippet",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsup src/index.ts --watch --format iife --global-name LassoSnippet --out-dir dist",
+    "build": "tsup src/index.ts --format iife --global-name LassoSnippet --minify --out-dir dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0"
+  }
+}

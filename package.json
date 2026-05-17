@@ -1,0 +1,20 @@
+{
+  "name": "lasso",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Lasso — the one-line script that calls back your abandoned checkouts. Built for Call My Agent Hackathon, May 17 2026.",
+  "workspaces": [
+    "snippet",
+    "server",
+    "dashboard"
+  ],
+  "scripts": {
+    "dev:snippet": "npm run dev -w snippet",
+    "dev:server": "npm run dev -w server",
+    "dev:dashboard": "npm run dev -w dashboard",
+    "build": "npm run build -w snippet && npm run build -w server && npm run build -w dashboard"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

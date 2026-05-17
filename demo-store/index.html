@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lasso Demo Store</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 32px; color: #222; }
+    h1 { font-size: 24px; margin-bottom: 4px; }
+    .tagline { color: #888; margin-bottom: 32px; }
+    .product { display: flex; gap: 16px; padding: 16px; border: 1px solid #eee; border-radius: 8px; margin-bottom: 24px; }
+    .product-img { width: 80px; height: 80px; background: linear-gradient(135deg, #f8c, #c8f); border-radius: 6px; }
+    .product-info h2 { margin: 0 0 4px; font-size: 16px; }
+    .product-info .price { color: #444; font-weight: 600; }
+    form { display: grid; gap: 12px; }
+    label { display: block; font-size: 13px; color: #555; margin-bottom: 4px; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+    button { padding: 12px 16px; background: #000; color: #fff; border: 0; border-radius: 6px; font-size: 15px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Acme Coffee Co.</h1>
+  <p class="tagline">Checkout</p>
+
+  <div class="product">
+    <div class="product-img"></div>
+    <div class="product-info">
+      <h2>Ethiopia Yirgacheffe — 12oz</h2>
+      <div class="price">$22.00</div>
+    </div>
+  </div>
+
+  <form id="checkout-form" onsubmit="event.preventDefault(); alert('(demo) purchase not actually completed');">
+    <div>
+      <label for="name">Name</label>
+      <input id="name" type="text" autocomplete="name" required>
+    </div>
+    <div>
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="email" required>
+    </div>
+    <div>
+      <label for="phone">Phone</label>
+      <input id="phone" type="tel" autocomplete="tel" required>
+    </div>
+    <div>
+      <label for="address">Shipping address</label>
+      <input id="address" type="text" autocomplete="street-address" required>
+    </div>
+    <button type="submit">Complete purchase — $22.00</button>
+  </form>
+
+  <!-- Lasso snippet, loaded last -->
+  <script src="http://localhost:1234/dist/index.global.js" data-merchant="demo" data-server="http://localhost:3001"></script>
+</body>
+</html>
