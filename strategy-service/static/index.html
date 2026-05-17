@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sarah — Cart Recovery Agent</title>
+<style>
+  :root {
+    --bg: #f6f1e6;
+    --panel: #ffffff;
+    --ink: #1e1812;
+    --muted: #7a6b5a;
+    --line: #ddd2bf;
+    --accent: #b8744a;
+    --ok: #4a8762;
+    --warn: #c47a1d;
+    --bad: #b3493c;
+    --mono: "SF Mono", Menlo, Consolas, monospace;
+    --serif: "Cormorant Garamond", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.9rem 1.4rem; background: var(--ink); color: var(--bg);
+  }
+  header .brand {
+    font-family: var(--serif); font-size: 1.5rem;
+    font-style: italic; font-weight: 500; letter-spacing: 0.02em;
+  }
+  header .brand small { font-family: var(--sans); font-size: 0.7rem; color: var(--muted); margin-left: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; font-style: normal; }
+  .status-pills { display: flex; gap: 0.5rem; font-family: var(--mono); font-size: 0.72rem; }
+  .pill { padding: 0.25rem 0.6rem; border-radius: 999px; background: rgba(255,255,255,0.08); letter-spacing: 0.04em; }
+  .pill.ok { background: rgba(74,135,98,0.28); color: #c5e2cf; }
+  .pill.bad { background: rgba(179,73,60,0.28); color: #f0c4be; }
+
+  main { flex: 1; display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
+
+  nav.rail {
+    background: #ede5d1; border-right: 1px solid var(--line);
+    padding: 1rem 0; display: flex; flex-direction: column;
+  }
+  nav .nav-item {
+    padding: 0.65rem 1.4rem; cursor: pointer; font-size: 0.88rem;
+    color: var(--ink); border-left: 3px solid transparent;
+    user-select: none;
+  }
+  nav .nav-item:hover { background: #e3d8be; }
+  nav .nav-item.active {
+    background: var(--bg); border-left-color: var(--accent);
+    font-weight: 600;
+  }
+  nav .nav-item small { display: block; font-size: 0.68rem; color: var(--muted); font-weight: 400; margin-top: 0.1rem; }
+
+  .content { padding: 1.4rem 2rem; overflow-y: auto; min-height: 0; }
+  .section { display: none; max-width: 920px; }
+  .section.active { display: block; }
+  .section h2 { font-family: var(--serif); font-style: italic; font-size: 1.8rem; margin: 0 0 0.2rem 0; }
+  .section .lead { color: var(--muted); margin-bottom: 1.4rem; font-size: 0.9rem; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 1.1rem 1.2rem; margin-bottom: 1rem;
+  }
+  .card h3 { margin: 0 0 0.5rem 0; font-family: var(--serif); font-style: italic; font-size: 1.2rem; color: var(--ink); }
+  .card .desc { color: var(--muted); font-size: 0.82rem; margin-bottom: 0.7rem; }
+
+  textarea, input[type=text], input[type=url] {
+    width: 100%; padding: 0.7rem 0.8rem; border: 1px solid var(--line);
+    border-radius: 5px; font-family: var(--mono); font-size: 0.78rem;
+    background: #fbf8f1; color: var(--ink); resize: vertical; outline: none;
+  }
+  textarea { line-height: 1.5; }
+  textarea:focus, input:focus { border-color: var(--accent); }
+  label { display: block; font-size: 0.74rem; color: var(--muted); margin: 0.6rem 0 0.2rem; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  button {
+    font-family: var(--sans); font-size: 0.82rem; padding: 0.5rem 0.95rem;
+    background: var(--ink); color: var(--bg); border: 0; border-radius: 5px;
+    cursor: pointer; letter-spacing: 0.02em;
+  }
+  button:hover { background: #2e251a; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.subtle { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  button.subtle:hover { background: rgba(0,0,0,0.04); }
+  button.accent { background: var(--accent); }
+  button.accent:hover { background: #a4623d; }
+  .btn-row { display: flex; gap: 0.6rem; align-items: center; margin-top: 0.7rem; }
+  .save-info { font-family: var(--mono); font-size: 0.74rem; color: var(--muted); }
+
+  /* Strategy editor */
+  .playbook-card { background: #fbf8f1; border: 1px solid var(--line); border-radius: 6px; padding: 0.8rem 1rem; margin-bottom: 0.7rem; }
+  .playbook-card .pb-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--mono); font-size: 0.78rem; color: var(--accent); margin-bottom: 0.4rem; }
+  .playbook-card .pb-head .key { font-weight: 600; }
+  .playbook-card .pb-head .badge { font-size: 0.66rem; padding: 0.1rem 0.45rem; background: rgba(184,116,74,0.18); color: var(--accent); border-radius: 3px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .playbook-card label { margin-top: 0.4rem; }
+  .playbook-card textarea { font-size: 0.76rem; }
+
+  /* Call log */
+  table.call-log {
+    width: 100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+    font-size: 0.82rem;
+  }
+  table.call-log th, table.call-log td {
+    padding: 0.6rem 0.75rem; text-align: left; border-bottom: 1px solid var(--line);
+  }
+  table.call-log th { background: #efe7d3; font-size: 0.7rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.06em; }
+  table.call-log td { font-family: var(--mono); font-size: 0.74rem; }
+  table.call-log tr.row { cursor: pointer; }
+  table.call-log tr.row:hover { background: #fbf8f1; }
+  table.call-log tr.expanded { background: #fbf8f1; }
+  .detail-row td { background: #f6f1e6; padding: 0.9rem 1.1rem; }
+  .detail-row .briefing-box { background: var(--panel); padding: 0.7rem 0.9rem; border: 1px solid var(--line); border-radius: 5px; font-size: 0.78rem; line-height: 1.5; margin-bottom: 0.6rem; max-height: 240px; overflow-y: auto; font-family: var(--sans); white-space: pre-wrap; }
+  .transcript {
+    background: var(--ink); color: #f0e6d2; padding: 0.6rem 0.8rem;
+    font-family: var(--mono); font-size: 0.74rem; line-height: 1.5;
+    border-radius: 5px; max-height: 280px; overflow-y: auto;
+  }
+  .transcript .turn { padding: 0.25rem 0; }
+  .transcript .user { color: #87c3ff; }
+  .transcript .agent { color: #ffd9b3; }
+  .transcript .lbl { color: var(--muted); font-size: 0.66rem; text-transform: uppercase; margin-right: 0.4rem; }
+  .transcript-empty { color: var(--muted); font-style: italic; }
+
+  .status-tag {
+    display: inline-block; padding: 0.1rem 0.5rem; border-radius: 3px;
+    font-family: var(--mono); font-size: 0.66rem; text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .status-tag.ringing, .status-tag.in_progress { background: rgba(196,122,29,0.18); color: var(--warn); }
+  .status-tag.completed { background: rgba(74,135,98,0.18); color: var(--ok); }
+  .status-tag.failed { background: rgba(179,73,60,0.18); color: var(--bad); }
+  .status-tag.none, .status-tag.unknown { background: rgba(122,107,90,0.18); color: var(--muted); }
+
+  .stub {
+    background: rgba(196,122,29,0.1); border: 1px dashed var(--warn);
+    color: var(--warn); padding: 0.6rem 0.9rem; border-radius: 5px;
+    font-size: 0.8rem; margin-top: 0.6rem;
+  }
+
+  .toast {
+    position: fixed; bottom: 1.2rem; right: 1.2rem;
+    background: var(--ink); color: var(--bg);
+    padding: 0.6rem 1rem; border-radius: 6px; font-size: 0.82rem;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.18); z-index: 999;
+    opacity: 0; transform: translateY(8px); transition: opacity 0.18s, transform 0.18s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.bad { background: var(--bad); }
+  .toast.ok { background: var(--ok); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">Sarah <small>cart recovery agent · saya</small></div>
+  <div class="status-pills">
+    <span class="pill" id="server-pill">server …</span>
+    <span class="pill" id="ap-pill">agentphone …</span>
+  </div>
+</header>
+
+<main>
+  <nav class="rail">
+    <div class="nav-item active" data-section="website">Website <small>knowledge source</small></div>
+    <div class="nav-item" data-section="brand">Brand brief <small>merchant context</small></div>
+    <div class="nav-item" data-section="strategy">Strategy <small>concern → playbook</small></div>
+    <div class="nav-item" data-section="behavior">Behavior <small>how Sarah talks</small></div>
+    <div class="nav-item" data-section="calls">Call log <small>recent activity</small></div>
+  </nav>
+
+  <div class="content">
+
+    <!-- WEBSITE -->
+    <div class="section active" id="section-website">
+      <h2>Website</h2>
+      <div class="lead">The source of truth for the brand. Sarah's brief and the per-call context get built from here.</div>
+      <div class="card">
+        <h3>Connected site</h3>
+        <div class="desc">Saaya — already pointed at this dashboard via the lasso bridge.</div>
+        <label>Site URL</label>
+        <input type="url" id="site-url" value="https://saaya.netlify.app" />
+        <label>Dev site (used while testing)</label>
+        <input type="url" id="dev-url" value="http://localhost:5500" />
+        <div class="btn-row">
+          <button id="save-site-btn">Save</button>
+          <button class="subtle" id="open-site-btn">Open dev site ↗</button>
+          <span class="save-info" id="site-save-info"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Knowledge base</h3>
+        <div class="desc">When wired, Sarah will crawl every product, FAQ, returns, and shipping page on the site, then build the brand brief from the actual content.</div>
+        <div class="stub">
+          Coming soon — crawl + auto-brief generation. For now, edit the brand brief manually under <strong>Brand brief</strong>.
+        </div>
+      </div>
+    </div>
+
+    <!-- BRAND BRIEF -->
+    <div class="section" id="section-brand">
+      <h2>Brand brief</h2>
+      <div class="lead">What kind of brand this is, what currency the prices are in, what's category-normal, and what Sarah can flex on. Read by the strategy layer before every call.</div>
+      <div class="card">
+        <textarea id="brand-editor" rows="28" placeholder="Loading…"></textarea>
+        <div class="btn-row">
+          <button id="brand-save-btn">Save</button>
+          <button class="subtle" id="brand-revert-btn">Revert</button>
+          <span class="save-info" id="brand-save-info"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- STRATEGY -->
+    <div class="section" id="section-strategy">
+      <h2>Strategy</h2>
+      <div class="lead">Deterministic playbooks. Each exit-point in the checkout maps to a concern, a probing question, and a suggested approach for Sarah.</div>
+      <div class="card">
+        <h3>By exit point</h3>
+        <div class="desc">Where the customer dropped off in checkout determines Sarah's leading hypothesis.</div>
+        <div id="exit-point-cards"></div>
+      </div>
+      <div class="card">
+        <h3>Overrides</h3>
+        <div class="desc">Signal flags that override the exit-point lookup. e.g. if <code>discountCodeFailed</code> is true, that always wins.</div>
+        <div id="override-cards"></div>
+      </div>
+      <div class="btn-row">
+        <button id="strategy-save-btn" class="accent">Save strategy</button>
+        <button class="subtle" id="strategy-revert-btn">Revert</button>
+        <span class="save-info" id="strategy-save-info"></span>
+      </div>
+    </div>
+
+    <!-- BEHAVIOR -->
+    <div class="section" id="section-behavior">
+      <h2>Behavior</h2>
+      <div class="lead">How Sarah talks — persona, conversation flow, and hard rules. Read on every call.</div>
+      <div class="card">
+        <textarea id="behavior-editor" rows="28" placeholder="Loading…"></textarea>
+        <div class="btn-row">
+          <button id="behavior-save-btn">Save</button>
+          <button class="subtle" id="behavior-revert-btn">Revert</button>
+          <span class="save-info" id="behavior-save-info"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- CALL LOG -->
+    <div class="section" id="section-calls">
+      <h2>Call log</h2>
+      <div class="lead">Every call Sarah has made. Click any row to see the briefing she received and the live transcript.</div>
+      <div class="card">
+        <div class="btn-row" style="margin-bottom: 0.7rem;">
+          <button id="test-call-btn" class="accent">Trigger test call</button>
+          <button class="subtle" id="refresh-calls-btn">Refresh</button>
+          <span class="save-info">Auto-refreshes every 4s</span>
+        </div>
+        <table class="call-log">
+          <thead>
+            <tr>
+              <th>Time</th><th>To</th><th>Status</th><th>Duration</th><th>Call ID</th>
+            </tr>
+          </thead>
+          <tbody id="calls-tbody">
+            <tr><td colspan="5" style="text-align: center; color: var(--muted);">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const toast = (msg, kind = "") => {
+    const el = $("toast");
+    el.textContent = msg;
+    el.className = "toast show " + kind;
+    setTimeout(() => { el.className = "toast " + kind; }, 1800);
+  };
+  const escapeHtml = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmtTime = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
+           " · " + d.toLocaleDateString();
+  };
+
+  // ─── Status pills ──────────────────────────────────────────────────
+  async function pingHealth() {
+    try {
+      const r = await fetch("/api/health");
+      $("server-pill").className = "pill " + (r.ok ? "ok" : "bad");
+      $("server-pill").textContent = r.ok ? "server ok" : "server down";
+    } catch { $("server-pill").className = "pill bad"; $("server-pill").textContent = "server down"; }
+  }
+  pingHealth();
+  setInterval(pingHealth, 5000);
+
+  // ─── Nav ───────────────────────────────────────────────────────────
+  document.querySelectorAll(".nav-item").forEach(n => {
+    n.addEventListener("click", () => {
+      document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("active"));
+      document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+      n.classList.add("active");
+      $("section-" + n.dataset.section).classList.add("active");
+      // Refresh call log when entering it
+      if (n.dataset.section === "calls") loadCalls();
+    });
+  });
+
+  // ─── Website section ───────────────────────────────────────────────
+  $("save-site-btn").addEventListener("click", () => {
+    localStorage.setItem("lasso_site_url", $("site-url").value);
+    localStorage.setItem("lasso_dev_url", $("dev-url").value);
+    $("site-save-info").textContent = "saved locally";
+    toast("Saved", "ok");
+  });
+  $("open-site-btn").addEventListener("click", () => {
+    window.open($("dev-url").value, "_blank");
+  });
+  (function loadSite() {
+    const a = localStorage.getItem("lasso_site_url");
+    const b = localStorage.getItem("lasso_dev_url");
+    if (a) $("site-url").value = a;
+    if (b) $("dev-url").value = b;
+  })();
+
+  // ─── Markdown editors (behavior + brand brief) ─────────────────────
+  async function loadPrompt(name, editorId, infoId) {
+    try {
+      const r = await fetch("/api/prompts/" + name);
+      const data = await r.json();
+      $(editorId).value = data.content || "";
+      $(editorId).dataset.original = data.content || "";
+      $(infoId).textContent = "loaded";
+    } catch { $(infoId).textContent = "failed to load"; }
+  }
+  async function savePrompt(name, editorId, infoId) {
+    $(infoId).textContent = "saving…";
+    try {
+      const r = await fetch("/api/prompts/" + name, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: $(editorId).value }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      $(editorId).dataset.original = $(editorId).value;
+      $(infoId).textContent = "saved · applies on next call";
+      toast("Saved " + name, "ok");
+    } catch (e) {
+      $(infoId).textContent = "save failed";
+      toast("Save failed: " + e.message, "bad");
+    }
+  }
+  loadPrompt("behavior", "behavior-editor", "behavior-save-info");
+  loadPrompt("brand_brief", "brand-editor", "brand-save-info");
+  $("behavior-save-btn").addEventListener("click", () => savePrompt("behavior", "behavior-editor", "behavior-save-info"));
+  $("behavior-revert-btn").addEventListener("click", () => { $("behavior-editor").value = $("behavior-editor").dataset.original || ""; $("behavior-save-info").textContent = "reverted"; });
+  $("brand-save-btn").addEventListener("click", () => savePrompt("brand_brief", "brand-editor", "brand-save-info"));
+  $("brand-revert-btn").addEventListener("click", () => { $("brand-editor").value = $("brand-editor").dataset.original || ""; $("brand-save-info").textContent = "reverted"; });
+
+  // ─── Strategy editor ──────────────────────────────────────────────
+  let playbookData = null;
+
+  async function loadPlaybooks() {
+    const r = await fetch("/api/playbooks");
+    playbookData = await r.json();
+    renderPlaybooks();
+  }
+  function renderPlaybooks() {
+    const byExit = playbookData.by_exit_point || {};
+    const overrides = playbookData.overrides || {};
+    const ORDER = ["cart", "address", "shipping_review", "payment", "order_review"];
+
+    function cardHtml(key, pb, kind) {
+      const badgeText = kind === "override" ? "override" : "exit point";
+      return `
+        <div class="playbook-card" data-key="${key}" data-kind="${kind}">
+          <div class="pb-head"><span class="key">${escapeHtml(key)}</span><span class="badge">${badgeText}</span></div>
+          <label>Concern label</label>
+          <input type="text" class="pb-concern" value="${escapeHtml(pb.concern || "")}" />
+          <label>Probe wording</label>
+          <input type="text" class="pb-probe" value="${escapeHtml(pb.probe || "")}" />
+          <label>Suggested approach</label>
+          <textarea class="pb-approach" rows="6">${escapeHtml(pb.approach || "")}</textarea>
+        </div>
+      `;
+    }
+
+    const exitKeys = [...ORDER.filter(k => byExit[k]), ...Object.keys(byExit).filter(k => !ORDER.includes(k))];
+    $("exit-point-cards").innerHTML = exitKeys.map(k => cardHtml(k, byExit[k], "exit")).join("");
+    $("override-cards").innerHTML = Object.keys(overrides).map(k => cardHtml(k, overrides[k], "override")).join("");
+  }
+  function collectPlaybooks() {
+    const out = { by_exit_point: {}, overrides: {}, fallback: playbookData.fallback || "order_review" };
+    document.querySelectorAll(".playbook-card").forEach(card => {
+      const key = card.dataset.key;
+      const kind = card.dataset.kind;
+      const pb = {
+        concern: card.querySelector(".pb-concern").value,
+        probe: card.querySelector(".pb-probe").value,
+        approach: card.querySelector(".pb-approach").value,
+      };
+      if (kind === "exit") out.by_exit_point[key] = pb;
+      else out.overrides[key] = pb;
+    });
+    return out;
+  }
+  loadPlaybooks();
+  $("strategy-save-btn").addEventListener("click", async () => {
+    $("strategy-save-info").textContent = "saving…";
+    try {
+      const body = collectPlaybooks();
+      const r = await fetch("/api/playbooks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error(await r.text());
+      playbookData = body;
+      $("strategy-save-info").textContent = "saved · applies on next call";
+      toast("Strategy saved", "ok");
+    } catch (e) {
+      $("strategy-save-info").textContent = "save failed";
+      toast("Strategy save failed: " + e.message, "bad");
+    }
+  });
+  $("strategy-revert-btn").addEventListener("click", () => { renderPlaybooks(); $("strategy-save-info").textContent = "reverted"; });
+
+  // ─── Call log ─────────────────────────────────────────────────────
+  const expandedCalls = new Set();
+
+  async function loadCalls() {
+    try {
+      const r = await fetch("/api/call-log?limit=30");
+      const data = await r.json();
+      const calls = data.calls || [];
+      if (!calls.length) {
+        $("calls-tbody").innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--muted);">No calls yet</td></tr>';
+        return;
+      }
+      const rows = calls.map(c => {
+        const status = (c.status || "unknown").toLowerCase();
+        const dur = c.duration_seconds != null ? c.duration_seconds + "s" : "—";
+        const shortId = (c.id || "").slice(-10);
+        let row = `<tr class="row" data-call-id="${c.id}">
+          <td>${escapeHtml(fmtTime(c.started_at))}</td>
+          <td>${escapeHtml(c.to_number || "")}</td>
+          <td><span class="status-tag ${status}">${escapeHtml(status)}</span></td>
+          <td>${escapeHtml(dur)}</td>
+          <td>${escapeHtml(shortId)}</td>
+        </tr>`;
+        if (expandedCalls.has(c.id)) {
+          row += `<tr class="detail-row" data-detail-for="${c.id}"><td colspan="5"><div class="detail-content">Loading…</div></td></tr>`;
+        }
+        return row;
+      }).join("");
+      $("calls-tbody").innerHTML = rows;
+      document.querySelectorAll("#calls-tbody tr.row").forEach(tr => {
+        tr.addEventListener("click", () => toggleCallDetail(tr.dataset.callId));
+      });
+      // re-render details for already-expanded calls
+      expandedCalls.forEach(id => renderCallDetail(id));
+    } catch (e) {
+      $("calls-tbody").innerHTML = `<tr><td colspan="5" style="color: var(--bad);">Failed to load: ${escapeHtml(e.message)}</td></tr>`;
+    }
+  }
+  async function toggleCallDetail(callId) {
+    if (expandedCalls.has(callId)) {
+      expandedCalls.delete(callId);
+    } else {
+      expandedCalls.add(callId);
+    }
+    loadCalls();
+  }
+  async function renderCallDetail(callId) {
+    const row = document.querySelector(`tr.detail-row[data-detail-for="${callId}"] .detail-content`);
+    if (!row) return;
+    try {
+      const [ctxRes, liveRes] = await Promise.all([
+        fetch("/api/calls/" + callId).then(r => r.json()),
+        fetch("/api/calls/" + callId + "/live").then(r => r.json()),
+      ]);
+      const briefing = ctxRes && ctxRes.briefing ? ctxRes.briefing : "(no briefing stored for this call — server may have restarted since)";
+      const turns = liveRes && liveRes.turns ? liveRes.turns : [];
+      let transcriptHtml;
+      if (turns.length === 0) {
+        transcriptHtml = '<div class="transcript-empty">No transcript yet.</div>';
+      } else {
+        transcriptHtml = turns.map(t => {
+          let h = "";
+          if (t.user) h += `<div class="turn user"><span class="lbl">user</span>${escapeHtml(t.user)}</div>`;
+          if (t.agent) h += `<div class="turn agent"><span class="lbl">agent</span>${escapeHtml(t.agent)}</div>`;
+          return h;
+        }).join("");
+      }
+      row.innerHTML = `
+        <div style="font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.3rem;">Briefing</div>
+        <div class="briefing-box">${escapeHtml(briefing)}</div>
+        <div style="font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.3rem;">Transcript</div>
+        <div class="transcript">${transcriptHtml}</div>
+      `;
+    } catch (e) {
+      row.innerHTML = `<div style="color: var(--bad);">Failed to load detail: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+  $("refresh-calls-btn").addEventListener("click", loadCalls);
+  $("test-call-btn").addEventListener("click", async () => {
+    $("test-call-btn").disabled = true;
+    $("test-call-btn").textContent = "Placing…";
+    try {
+      const r = await fetch("/api/test-call", { method: "POST" });
+      const data = await r.json();
+      toast("Test call placed: " + (data.call_id || "?"), "ok");
+      // Switch to calls section and refresh
+      document.querySelector('.nav-item[data-section="calls"]').click();
+    } catch (e) {
+      toast("Test call failed: " + e.message, "bad");
+    } finally {
+      $("test-call-btn").disabled = false;
+      $("test-call-btn").textContent = "Trigger test call";
+    }
+  });
+  loadCalls();
+  setInterval(() => { if ($("section-calls").classList.contains("active")) loadCalls(); }, 4000);
+</script>
+
+</body>
+</html>

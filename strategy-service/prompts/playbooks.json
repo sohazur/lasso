@@ -1,0 +1,37 @@
+{
+  "by_exit_point": {
+    "cart": {
+      "concern": "uncertainty about whether the pieces are right",
+      "probe": "wanted to see if you weren't sure about the pieces themselves",
+      "approach": "Offer a video consult with the team, or holding the items while she thinks. Mention 14-day free returns. Do NOT offer discounts — discounts don't solve uncertainty."
+    },
+    "address": {
+      "concern": "something with the address or shipping setup",
+      "probe": "ran into something with the address or shipping setup",
+      "approach": "Ask what specifically. Offer to help set it up directly. Split-shipping is fine if she needs that. Do NOT offer discounts."
+    },
+    "shipping_review": {
+      "concern": "the shipping cost or timing",
+      "probe": "the shipping was a bit high, or the timing wasn't quite right",
+      "approach": "Ask when she needs it by. Offer free expedited shipping framed as a first-time-customer perk. If timing is too tight, be honest that you'll check with the founder and message her on WhatsApp."
+    },
+    "payment": {
+      "concern": "the final total when you got to payment",
+      "probe": "the total at the end gave you pause",
+      "approach": "First, justify value softly — 'weddings are one day but the memories are forever, and if you genuinely love the piece, that matters more than saving a bit.' Ask if she loves the piece.\n\nIf yes but still hesitant on price, use the DISCOUNT ESCALATION ladder:\n  Tier 1 — open with 10% first-time-customer discount. ALWAYS start here.\n  Tier 2 — if she pushes back once ('still a lot', 'closer to X'), go to 20% off, framed as 'let me see what I can do — actually I can do 20%'.\n  Tier 3 — only if she pushes back AGAIN (a second time) AND the cart total is 500,000 PKR or higher, you can escalate to a maximum of 50% off. Frame this as a real exception: 'okay, let me ask the team — I think we can stretch to 50% for you on this one.'\n\nRules: NEVER lead with anything above Tier 1. NEVER mention Tier 2 or Tier 3 until she's pushed back. ONE tier at a time, see how she responds, then escalate only if needed. If she's happy at any tier, stop and close.\n\nDo NOT mention shipping unless she does."
+    },
+    "order_review": {
+      "concern": "last-second hesitation on the overall commitment",
+      "probe": "you got to the very last step and just paused — was there something specific?",
+      "approach": "Listen carefully — could be price, fit, or just wanting more time. Match to what she names. If vague, accept gracefully and move to a warm close."
+    }
+  },
+  "overrides": {
+    "discountCodeFailed": {
+      "concern": "the discount code didn't work",
+      "probe": "the discount code didn't go through",
+      "approach": "Acknowledge the frustration. Offer a 10% first-time-customer code that will work. Be apologetic without overdoing it."
+    }
+  },
+  "fallback": "order_review"
+}
