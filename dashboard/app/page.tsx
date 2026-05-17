@@ -34,64 +34,40 @@ export default function Home() {
   }, []);
 
   return (
-    <main style={{ padding: 32, maxWidth: 1200, margin: "0 auto" }}>
+    <main className="lasso-shell" style={{ maxWidth: 1100 }}>
       <header
+        className="lasso-header"
         style={{
           display: "flex",
           alignItems: "flex-start",
           justifyContent: "space-between",
-          marginBottom: 32,
+          gap: 16,
         }}
       >
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>
-            Lasso
-          </h1>
-          <p style={{ color: "#666", margin: 0 }}>
-            Recovered checkouts dashboard{" "}
-            <span style={{ fontSize: 12, color: "#999", marginLeft: 8 }}>
-              live · refreshes every 2s
+        <div style={{ flex: 1 }}>
+          <span className="lasso-eyebrow">Lasso</span>
+          <h1 className="lasso-h1">Recovered checkouts</h1>
+          <p className="lasso-sub">
+            One script tag. Every abandoned cart gets a callback in under 60
+            seconds.{" "}
+            <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>
+              · live, refreshes every 2s
             </span>
           </p>
         </div>
-        <a
-          href="/onboarding"
-          style={{
-            background: "#111",
-            color: "#fff",
-            padding: "10px 18px",
-            borderRadius: 8,
-            fontSize: 14,
-            fontWeight: 500,
-            textDecoration: "none",
-          }}
-        >
+        <a href="/onboarding" className="btn btn-primary">
           + Onboard a store
         </a>
       </header>
 
-      {error && (
-        <div
-          style={{
-            background: "#fef2f2",
-            color: "#991b1b",
-            border: "1px solid #fecaca",
-            borderRadius: 8,
-            padding: 12,
-            fontSize: 13,
-            marginBottom: 24,
-          }}
-        >
-          {error}
-        </div>
-      )}
+      {error && <div className="lasso-error" style={{ marginBottom: 24 }}>{error}</div>}
 
       <section
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
           gap: 16,
-          marginBottom: 32,
+          marginBottom: 24,
         }}
       >
         <Stat
@@ -115,16 +91,28 @@ export default function Home() {
         />
       </section>
 
-      <section>
-        <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>
+      <section className="lasso-card" style={{ padding: 24 }}>
+        <h2
+          style={{
+            fontSize: 18,
+            fontWeight: 600,
+            margin: "0 0 16px",
+            letterSpacing: "-0.01em",
+          }}
+        >
           Recent calls
         </h2>
         {loading ? (
-          <p style={{ color: "#999" }}>Loading…</p>
+          <p style={{ color: "var(--ink-faint)", fontSize: 14, margin: 0 }}>
+            Loading…
+          </p>
         ) : calls.length === 0 ? (
-          <p style={{ color: "#999" }}>
+          <p style={{ color: "var(--ink-muted)", fontSize: 14, margin: 0 }}>
             No calls yet.{" "}
-            <a href="/onboarding" style={{ color: "#1d4ed8" }}>
+            <a
+              href="/onboarding"
+              style={{ color: "var(--amber-deep)", textDecoration: "underline" }}
+            >
               Onboard a store
             </a>{" "}
             to drop in the script tag and start recovering checkouts.
@@ -139,10 +127,17 @@ export default function Home() {
 
 function CallsTable({ calls }: { calls: CallRow[] }) {
   return (
-    <div style={{ border: "1px solid #eee", borderRadius: 8, overflow: "hidden" }}>
+    <div
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: 16,
+        overflow: "hidden",
+        background: "#fff",
+      }}
+    >
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead>
-          <tr style={{ background: "#fafafa", textAlign: "left" }}>
+          <tr style={{ background: "rgba(247,244,237,0.6)", textAlign: "left" }}>
             <Th>When</Th>
             <Th>Merchant</Th>
             <Th>Caller</Th>
@@ -155,14 +150,18 @@ function CallsTable({ calls }: { calls: CallRow[] }) {
         </thead>
         <tbody>
           {calls.map((c) => (
-            <tr key={c.id} style={{ borderTop: "1px solid #eee" }}>
+            <tr key={c.id} style={{ borderTop: "1px solid var(--border)" }}>
               <Td>{fmtTime(c.created_at)}</Td>
-              <Td>{c.merchant_id}</Td>
+              <Td>
+                <code className="lasso-chip">{c.merchant_id}</code>
+              </Td>
               <Td>
                 {c.customer_name ? (
                   <>
                     <div style={{ fontWeight: 500 }}>{c.customer_name}</div>
-                    <div style={{ color: "#999", fontSize: 12 }}>{c.phone}</div>
+                    <div style={{ color: "var(--ink-faint)", fontSize: 12 }}>
+                      {c.phone}
+                    </div>
                   </>
                 ) : (
                   c.phone
@@ -174,10 +173,27 @@ function CallsTable({ calls }: { calls: CallRow[] }) {
               <Td>
                 <StatusPill status={c.status} />
               </Td>
-              <Td>{c.outcome ? <OutcomePill outcome={c.outcome} /> : <span style={{ color: "#aaa" }}>—</span>}</Td>
-              <Td><span style={{ color: "#666", fontSize: 12 }}>{c.trigger ?? "—"}</span></Td>
               <Td>
-                <a href={`/calls/${c.id}`} style={{ color: "#1d4ed8", textDecoration: "none" }}>
+                {c.outcome ? (
+                  <OutcomePill outcome={c.outcome} />
+                ) : (
+                  <span style={{ color: "var(--ink-faint)" }}>—</span>
+                )}
+              </Td>
+              <Td>
+                <span style={{ color: "var(--ink-muted)", fontSize: 12 }}>
+                  {c.trigger ?? "—"}
+                </span>
+              </Td>
+              <Td>
+                <a
+                  href={`/calls/${c.id}`}
+                  style={{
+                    color: "var(--amber-deep)",
+                    textDecoration: "none",
+                    fontWeight: 500,
+                  }}
+                >
                   view →
                 </a>
               </Td>
@@ -195,9 +211,13 @@ function CartCell({ call }: { call: CallRow }) {
   const total = call.cart_total_cents;
   return (
     <>
-      <div>{item?.title ?? <span style={{ color: "#aaa" }}>—</span>}</div>
+      <div>
+        {item?.title ?? <span style={{ color: "var(--ink-faint)" }}>—</span>}
+      </div>
       {typeof total === "number" && (
-        <div style={{ color: "#666", fontSize: 12 }}>{fmtMoney(total)}</div>
+        <div style={{ color: "var(--ink-muted)", fontSize: 12 }}>
+          {fmtMoney(total)}
+        </div>
       )}
     </>
   );
@@ -213,72 +233,127 @@ function StatusPill({ status }: { status: CallRow["status"] }) {
     no_answer: { bg: "#f3f4f6", fg: "#6b7280" },
   };
   const c = colors[status];
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "2px 8px",
-        borderRadius: 999,
-        background: c.bg,
-        color: c.fg,
-        fontSize: 11,
-        fontWeight: 600,
-        textTransform: "uppercase",
-        letterSpacing: 0.3,
-      }}
-    >
-      {status.replace("_", " ")}
-    </span>
-  );
+  return <Pill bg={c.bg} fg={c.fg}>{status.replace("_", " ")}</Pill>;
 }
 
 function OutcomePill({ outcome }: { outcome: NonNullable<CallRow["outcome"]> }) {
-  const colors: Record<NonNullable<CallRow["outcome"]>, { bg: string; fg: string }> = {
+  const colors: Record<
+    NonNullable<CallRow["outcome"]>,
+    { bg: string; fg: string }
+  > = {
     recovered: { bg: "#d1fae5", fg: "#065f46" },
     declined: { bg: "#fee2e2", fg: "#991b1b" },
     unreachable: { bg: "#f3f4f6", fg: "#6b7280" },
     error: { bg: "#fef2f2", fg: "#991b1b" },
   };
   const c = colors[outcome];
+  return <Pill bg={c.bg} fg={c.fg}>{outcome}</Pill>;
+}
+
+function Pill({
+  bg,
+  fg,
+  children,
+}: {
+  bg: string;
+  fg: string;
+  children: React.ReactNode;
+}) {
   return (
     <span
       style={{
         display: "inline-block",
-        padding: "2px 8px",
+        padding: "3px 9px",
         borderRadius: 999,
-        background: c.bg,
-        color: c.fg,
+        background: bg,
+        color: fg,
         fontSize: 11,
         fontWeight: 600,
         textTransform: "uppercase",
-        letterSpacing: 0.3,
+        letterSpacing: 0.4,
       }}
     >
-      {outcome}
+      {children}
     </span>
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Stat({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+}) {
   return (
-    <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 16 }}>
-      <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 700 }}>{value}</div>
-      {sub && <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>{sub}</div>}
+    <div
+      style={{
+        padding: 20,
+        borderRadius: 24,
+        border: "1px solid var(--border)",
+        background: "rgba(255, 255, 255, 0.85)",
+        boxShadow: "var(--shadow-soft)",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          color: "var(--ink-muted)",
+          textTransform: "uppercase",
+          letterSpacing: "0.08em",
+          marginBottom: 8,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: 28,
+          fontWeight: 600,
+          letterSpacing: "-0.02em",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </div>
+      {sub && (
+        <div
+          style={{
+            fontSize: 12,
+            color: "var(--ink-faint)",
+            marginTop: 6,
+          }}
+        >
+          {sub}
+        </div>
+      )}
     </div>
   );
 }
 
 function Th({ children }: { children?: React.ReactNode }) {
   return (
-    <th style={{ padding: "10px 12px", fontWeight: 600, color: "#555", fontSize: 12 }}>
+    <th
+      style={{
+        padding: "12px 14px",
+        fontWeight: 600,
+        color: "var(--ink-muted)",
+        fontSize: 11,
+        textTransform: "uppercase",
+        letterSpacing: 0.6,
+      }}
+    >
       {children}
     </th>
   );
 }
 
 function Td({ children }: { children?: React.ReactNode }) {
-  return <td style={{ padding: "10px 12px", verticalAlign: "top" }}>{children}</td>;
+  return (
+    <td style={{ padding: "12px 14px", verticalAlign: "top" }}>{children}</td>
+  );
 }
 
 function fmtMoney(cents: number | null | undefined): string {

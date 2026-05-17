@@ -25,6 +25,7 @@ export type OnboardStatus = {
   merchant_id: string;
   status: MerchantStatus;
   failed_step: string | null;
+  failed_reason: string | null;
   name: string;
 };
 

@@ -177,10 +177,10 @@ GET  /health                   ← health check
 | Tag pattern                          | Holds                                                     |
 |--------------------------------------|-----------------------------------------------------------|
 | `merchant:{id}:context`              | Brand-context briefing (voice, top products, policies)    |
-| `merchant:{id}:chunks`               | Site KB chunks (one record per chunk, hash-keyed)         |
+| `merchant:{id}:private`              | Merchant-private context (coupon codes, internal notes)   |
 | `merchant:{id}:phone:{phone}`        | Per-caller memory: facts, prior calls, raw transcripts    |
 
-**Moss** holds one index per merchant: `merchant_{id}`. Built once during onboarding, queried only at call time via the `lookup_store` tool. Documents come straight from the same chunks Supermemory stores.
+**Moss** holds one index per merchant: `merchant_{id}`. Built once during onboarding, queried only at call time via the `lookup_store` tool. Raw chunks live in Moss only — Supermemory holds the LLM-summarized briefing, not the raw chunks.
 
 **Supabase (Postgres)** holds transactional state — the `merchants`, `calls`, and `stripe_attributions` tables from §4. This is what the dashboard subscribes to in realtime.
 

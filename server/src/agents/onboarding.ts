@@ -48,6 +48,7 @@ export async function onboardMerchant(req: OnboardRequest): Promise<OnboardResul
     status: "scraping",
     private_context: req.private_context ?? null,
     failed_step: null,
+    failed_reason: null,
   });
 
   // Fire the rest async — return fast so the HTTP caller doesn't time out
@@ -77,7 +78,22 @@ async function runPipelineInBackground(req: OnboardRequest): Promise<void> {
     console.log(`[lasso] onboarding ${merchantId}: produced ${chunks.length} chunks`);
   } catch (err) {
     console.error(`[lasso] onboarding ${merchantId}: crawl/chunk failed`, err);
-    await db.updateMerchant(merchantId, { status: "failed", failed_step: "scraping" });
+    await db.updateMerchant(merchantId, {
+      status: "failed",
+      failed_step: "scraping",
+      failed_reason: shortError(err),
+    });
+    return;
+  }
+
+  if (chunks.length === 0) {
+    const reason = "Found 0 crawlable pages — check the URL or the site's robots.txt.";
+    console.error(`[lasso] onboarding ${merchantId}: ${reason}`);
+    await db.updateMerchant(merchantId, {
+      status: "failed",
+      failed_step: "scraping",
+      failed_reason: reason,
+    });
     return;
   }
 
@@ -99,7 +115,11 @@ async function runPipelineInBackground(req: OnboardRequest): Promise<void> {
     );
   } catch (err) {
     console.error(`[lasso] onboarding ${merchantId}: Moss indexing failed`, err);
-    await db.updateMerchant(merchantId, { status: "failed", failed_step: "indexing" });
+    await db.updateMerchant(merchantId, {
+      status: "failed",
+      failed_step: "indexing",
+      failed_reason: shortError(err),
+    });
     return;
   }
 
@@ -127,7 +147,7 @@ async function runPipelineInBackground(req: OnboardRequest): Promise<void> {
   }
 
   // Step 7: ready (AgentPhone resources are now shared, provisioned at server boot)
-  await db.updateMerchant(merchantId, { status: "ready", failed_step: null });
+  await db.updateMerchant(merchantId, { status: "ready", failed_step: null, failed_reason: null });
   console.log(`[lasso] onboarding ${merchantId}: ready`);
 }
 
@@ -179,6 +199,11 @@ function safeHost(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+function shortError(err: unknown, max = 240): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return raw.replace(/\s+/g, " ").trim().slice(0, max);
 }
 
 export async function getOnboardStatus(merchantId: string): Promise<MerchantRow | null> {

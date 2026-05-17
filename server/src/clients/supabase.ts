@@ -17,6 +17,7 @@ export type MerchantRow = {
   primary_domain?: string | null;
   status: MerchantStatus;
   failed_step?: string | null;
+  failed_reason?: string | null;
   private_context?: Record<string, unknown> | null;
   agentphone_agent_id?: string | null;
   agentphone_number_id?: string | null;

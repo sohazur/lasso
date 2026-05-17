@@ -26,6 +26,7 @@ export async function registerOnboardRoutes(app: FastifyInstance): Promise<void>
       merchant_id: merchant.id,
       status: merchant.status,
       failed_step: merchant.failed_step ?? null,
+      failed_reason: merchant.failed_reason ?? null,
       name: merchant.name,
     });
   });

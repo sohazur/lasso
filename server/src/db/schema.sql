@@ -7,6 +7,7 @@ create table if not exists merchants (
   primary_domain text,
   status text,
   failed_step text,
+  failed_reason text,
   private_context jsonb,
   agentphone_agent_id text,
   agentphone_number_id text,
@@ -14,6 +15,9 @@ create table if not exists merchants (
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+-- Backfill column if the table already exists from a prior schema run
+alter table merchants add column if not exists failed_reason text;
 
 create table if not exists calls (
   id uuid primary key default gen_random_uuid(),
