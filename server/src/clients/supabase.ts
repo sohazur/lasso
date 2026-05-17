@@ -6,6 +6,7 @@
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import WebSocket from "ws";
 import { env, isMock } from "./config.js";
 
 export type MerchantStatus = "scraping" | "indexing" | "ready" | "failed";
@@ -172,8 +173,15 @@ export function getStore(): DataStore {
     console.warn("[lasso] supabase: MOCK mode — set SUPABASE_URL and SUPABASE_SERVICE_KEY for real persistence");
     _store = new MockStore();
   } else {
+    // Node 20 doesn't ship a global WebSocket; supabase-js needs one for the
+    // realtime client. Provide `ws` so cold queries don't blow up. The cast
+    // is necessary because `ws` and the browser WebSocket type don't match
+    // structurally (different ErrorEvent shapes) but they're API-compatible
+    // at runtime.
     const client = createClient(env.supabaseUrl!, env.supabaseServiceKey!, {
       auth: { persistSession: false },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      realtime: { transport: WebSocket as any },
     });
     _store = new SupabaseStore(client);
   }

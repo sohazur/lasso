@@ -18,10 +18,12 @@
     "fastify-raw-body": "^4.3.0",
     "openai": "^6.38.0",
     "pino": "^9.0.0",
+    "ws": "^8.20.1",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0"
   }
