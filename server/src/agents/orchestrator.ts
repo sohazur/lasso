@@ -11,7 +11,7 @@
 
 import { getStore, type CallRow } from "../clients/supabase.js";
 import { getMemory } from "../clients/supermemory.js";
-import { getAgentPhone, type AgentPhoneTool } from "../clients/agentphone.js";
+import { getAgentPhone } from "../clients/agentphone.js";
 import { env } from "../clients/config.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
@@ -88,16 +88,22 @@ export async function triggerCall(event: AbandonmentEvent): Promise<{ call_id: s
     callerHistory,
   });
 
-  // 5. Place the call
-  const tools = buildCallTools(event.merchant_id, snap.phone, event.page_url);
+  // 5. Place the call (AgentPhone hosted mode — we pass the full system prompt per call)
+  if (!merchant.agentphone_agent_id) {
+    await db.updateCall(callRow.id, { status: "failed", outcome: "error" });
+    return { call_id: callRow.id, reason: "merchant_missing_agentphone_agent" };
+  }
+
   const placement = await getAgentPhone().placeCall({
-    to: snap.phone,
-    from: env.lassoPhoneNumber ?? "+10000000000",
+    agentId: merchant.agentphone_agent_id,
+    toNumber: snap.phone,
+    fromNumberId: merchant.agentphone_number_id ?? undefined,
     systemPrompt,
-    voiceId: process.env.LASSO_VOICE_ID,
-    tools,
-    webhookUrl: `${env.publicUrl}/webhooks/agentphone`,
-    metadata: { call_row_id: callRow.id, merchant_id: event.merchant_id },
+    initialGreeting: snap.name ? `Hi ${snap.name}, quick call about your checkout — got a sec?` : undefined,
+    variables: {
+      customer_name: snap.name ?? "there",
+      cart_total: typeof snap.cart_total_cents === "number" ? `$${(snap.cart_total_cents / 100).toFixed(2)}` : "",
+    },
   });
 
   await db.updateCall(callRow.id, {
@@ -108,52 +114,14 @@ export async function triggerCall(event: AbandonmentEvent): Promise<{ call_id: s
   return { call_id: callRow.id };
 }
 
-function buildCallTools(merchantId: string, phone: string, resumeUrl?: string): AgentPhoneTool[] {
-  return [
-    {
-      name: "lookup_store",
-      description:
-        "Look up specific information about the store (products, pricing, shipping, returns, policies). Use this if the customer asks a question you don't immediately know the answer to.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "A natural-language question or 3-6 keyword search phrase." },
-        },
-        required: ["query"],
-      },
-    },
-    {
-      name: "send_checkout_link",
-      description: "Send the customer a text message with a direct link back to their checkout. Use only after they agree.",
-      parameters: {
-        type: "object",
-        properties: {
-          message: { type: "string", description: "Short SMS body. The checkout URL will be appended automatically." },
-        },
-        required: ["message"],
-      },
-    },
-    {
-      name: "offer_discount",
-      description: "Offer the merchant's recovery discount code (if any) to recover the sale. Read it from merchant-private context — never invent one.",
-      parameters: {
-        type: "object",
-        properties: {
-          reason: { type: "string", description: "Internal: why you're offering it. Not spoken." },
-        },
-        required: ["reason"],
-      },
-    },
-  ];
-}
-
 function secondsSince(ms?: number): number {
   if (!ms) return 0;
   return Math.max(0, (Date.now() - ms) / 1000);
 }
 
 function normalizePhone(s: string): string {
-  return s.replace(/[^\d+]/g, "");
+  // For Supermemory tag use — digits only. The tag regex rejects '+'.
+  return s.replace(/\D/g, "");
 }
 
 function cryptoRandomId(): string {

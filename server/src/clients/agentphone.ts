@@ -1,36 +1,65 @@
 /**
- * AgentPhone client — outbound voice calls.
+ * AgentPhone client — real API (api.agentphone.ai/v1).
  *
- * The real SDK contract isn't standardized in this codebase yet, so this
- * wrapper exposes the minimum shape we need: place a call with a system
- * prompt + a tools array, get a call ID back, then receive webhooks for
- * lifecycle events.
+ * Two-step model:
+ *   1. (Once per merchant, at onboarding) Create an agent persona + attach
+ *      a phone number. Stash both IDs on the merchant row.
+ *   2. (Per call) POST /v1/calls with { agentId, toNumber, systemPrompt }
+ *      using "hosted" mode so AgentPhone runs the LLM for us.
  *
- * MOCK mode: returns a fake call ID and logs the would-be payload.
- * FAKE_CALL_MODE: same as mock, even when keys are present — for stage
- * rehearsal without burning sponsor credits.
+ * MOCK mode: returns fake IDs and logs the would-be payload.
+ * FAKE_CALL_MODE: same as mock, even with keys present — for stage rehearsal.
  */
 
 import { env, isMock } from "./config.js";
 
-export type AgentPhoneTool = {
+const BASE_URL = "https://api.agentphone.ai/v1";
+
+export type CreateAgentRequest = {
   name: string;
-  description: string;
-  parameters: Record<string, unknown>;
-  // The server-side handler invoked when the agent calls this tool.
-  // AgentPhone's real API may use webhooks for this; this is a placeholder shape.
-  handler?: (args: Record<string, unknown>) => Promise<string>;
+  description?: string;
+  voiceMode?: "hosted" | "webhook";
+  systemPrompt?: string;
+  beginMessage?: string;
+  voice?: string;
+  modelTier?: "turbo" | "balanced" | "max";
+  sttMode?: "fast" | "accurate";
+};
+
+export type AgentResponse = {
+  id: string;
+  name: string;
+  voiceMode: string;
+  voice?: string;
+};
+
+export type ProvisionNumberResponse = {
+  id: string;
+  phoneNumber: string;
+  status?: string;
+  agentId?: string | null;
+  type?: string;
+};
+
+export type AttachNumberResponse = {
+  agentId: string;
+  number: ProvisionNumberResponse;
+};
+
+export type ListNumbersResponse = {
+  data: ProvisionNumberResponse[];
+  hasMore?: boolean;
+  total?: number;
 };
 
 export type PlaceCallRequest = {
-  to: string;
-  from: string;
-  systemPrompt: string;
-  firstMessage?: string;
-  voiceId?: string;
-  tools?: AgentPhoneTool[];
-  webhookUrl: string;
-  metadata?: Record<string, unknown>;
+  agentId: string;
+  toNumber: string;
+  fromNumberId?: string;
+  systemPrompt?: string;
+  initialGreeting?: string;
+  voice?: string;
+  variables?: Record<string, string>;
 };
 
 export type PlaceCallResponse = {
@@ -39,51 +68,82 @@ export type PlaceCallResponse = {
 };
 
 export interface AgentPhoneClient {
+  createAgent(req: CreateAgentRequest): Promise<AgentResponse>;
+  listNumbers(): Promise<ProvisionNumberResponse[]>;
+  provisionNumber(): Promise<ProvisionNumberResponse>;
+  attachNumber(agentId: string, numberId: string): Promise<AttachNumberResponse>;
   placeCall(req: PlaceCallRequest): Promise<PlaceCallResponse>;
 }
 
 class MockAgentPhoneClient implements AgentPhoneClient {
+  async createAgent(req: CreateAgentRequest): Promise<AgentResponse> {
+    const id = `mock_agent_${Date.now()}`;
+    console.log(`[lasso] agentphone MOCK createAgent → name="${req.name}" voiceMode=${req.voiceMode ?? "hosted"}`);
+    return { id, name: req.name, voiceMode: req.voiceMode ?? "hosted" };
+  }
+  async listNumbers(): Promise<ProvisionNumberResponse[]> {
+    return [];
+  }
+  async provisionNumber(): Promise<ProvisionNumberResponse> {
+    const id = `mock_num_${Date.now()}`;
+    console.log(`[lasso] agentphone MOCK provisionNumber → ${id}`);
+    return { id, phoneNumber: env.lassoPhoneNumber ?? "+10000000000", status: "active" };
+  }
+  async attachNumber(agentId: string, numberId: string): Promise<AttachNumberResponse> {
+    console.log(`[lasso] agentphone MOCK attachNumber → agent=${agentId} number=${numberId}`);
+    return { agentId, number: { id: numberId, phoneNumber: env.lassoPhoneNumber ?? "+10000000000" } };
+  }
   async placeCall(req: PlaceCallRequest): Promise<PlaceCallResponse> {
     const callId = `mock_call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     console.log(
-      `[lasso] agentphone MOCK placeCall → to=${req.to} from=${req.from} promptLen=${req.systemPrompt.length} tools=${req.tools?.length ?? 0}`
+      `[lasso] agentphone MOCK placeCall → agent=${req.agentId} to=${req.toNumber} promptLen=${req.systemPrompt?.length ?? 0}`
     );
-    console.log(`[lasso] agentphone MOCK system prompt:\n${req.systemPrompt.slice(0, 500)}…`);
+    console.log(`[lasso] agentphone MOCK system prompt:\n${(req.systemPrompt ?? "").slice(0, 600)}…`);
     return { callId, status: "queued" };
   }
 }
 
 class RealAgentPhoneClient implements AgentPhoneClient {
-  // TODO: replace with real AgentPhone SDK / REST contract once we have docs.
   constructor(private apiKey: string) {}
 
-  async placeCall(req: PlaceCallRequest): Promise<PlaceCallResponse> {
-    // Placeholder using a hypothetical REST shape — we'll patch this with the
-    // real endpoint once the AgentPhone sponsor docs are in hand.
-    const res = await fetch("https://api.agentphone.com/v1/calls", {
-      method: "POST",
+  private async request<T>(path: string, body?: unknown, method: "GET" | "POST" = "POST"): Promise<T> {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      method,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({
-        to: req.to,
-        from: req.from,
-        system_prompt: req.systemPrompt,
-        first_message: req.firstMessage,
-        voice_id: req.voiceId,
-        tools: req.tools?.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
-        webhook_url: req.webhookUrl,
-        metadata: req.metadata,
-      }),
+      body: body ? JSON.stringify(body) : undefined,
     });
+    const text = await res.text();
     if (!res.ok) {
-      const text = await res.text();
-      console.error(`[lasso] agentphone placeCall failed ${res.status}: ${text}`);
-      return { callId: "", status: "failed" };
+      throw new Error(`agentphone ${method} ${path} ${res.status}: ${text.slice(0, 600)}`);
     }
-    const json = (await res.json()) as { call_id: string; status: "queued" | "ringing" };
-    return { callId: json.call_id, status: json.status };
+    return JSON.parse(text) as T;
+  }
+
+  async createAgent(req: CreateAgentRequest): Promise<AgentResponse> {
+    return this.request<AgentResponse>("/agents", req);
+  }
+
+  async listNumbers(): Promise<ProvisionNumberResponse[]> {
+    const res = await this.request<ListNumbersResponse>("/numbers", undefined, "GET");
+    return res.data ?? [];
+  }
+
+  async provisionNumber(): Promise<ProvisionNumberResponse> {
+    return this.request<ProvisionNumberResponse>("/numbers", {});
+  }
+
+  async attachNumber(agentId: string, numberId: string): Promise<AttachNumberResponse> {
+    return this.request<AttachNumberResponse>(`/agents/${agentId}/numbers`, { numberId });
+  }
+
+  async placeCall(req: PlaceCallRequest): Promise<PlaceCallResponse> {
+    const res = await this.request<{ id?: string; callId?: string; status?: string }>("/calls", req);
+    const callId = res.callId ?? res.id ?? "";
+    const status = (res.status as "queued" | "ringing" | "failed") ?? "queued";
+    return { callId, status };
   }
 }
 

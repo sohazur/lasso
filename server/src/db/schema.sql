@@ -5,7 +5,14 @@ create table if not exists merchants (
   id text primary key,
   name text,
   primary_domain text,
-  created_at timestamptz default now()
+  status text,
+  failed_step text,
+  private_context jsonb,
+  agentphone_agent_id text,
+  agentphone_number_id text,
+  agentphone_phone_number text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
 
 create table if not exists calls (

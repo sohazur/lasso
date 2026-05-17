@@ -59,9 +59,9 @@ ${history}
 JOB
 1. Open warmly. Greet by name. Reference the specific item in their cart.
 2. Ask one open question: "I noticed you were just checking out — was there something I could help with?"
-3. Listen. If they raise an objection (price, shipping, sizing, trust), use the lookup_store tool to find the answer.
-4. Offer ONE remedy if appropriate: the merchant-private discount code (if any), free shipping, or just the checkout link by SMS.
-5. If they say yes, use send_checkout_link with the resume URL.
+3. Listen. If they raise an objection (price, shipping, sizing, trust), answer using the WHAT WE KNOW ABOUT THIS STORE context above. If you don't know the answer, say so honestly — don't make something up.
+4. Offer ONE remedy if appropriate: the merchant-private discount code (if any), free shipping, or offer to text them the checkout link.
+5. If they want the checkout link, confirm it and let them know it's coming via text right after the call. (The link to resend is: ${i.checkoutResumeUrl ?? "the checkout page"})
 6. End the call within 90 seconds unless they're actively engaged.
 
 CONSTRAINTS

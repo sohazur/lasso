@@ -74,5 +74,6 @@ export async function registerAgentPhoneWebhook(app: FastifyInstance): Promise<v
 }
 
 function normalize(s: string): string {
-  return s.replace(/[^\d+]/g, "");
+  // For Supermemory tag use — digits only. The tag regex rejects '+'.
+  return s.replace(/\D/g, "");
 }

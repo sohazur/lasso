@@ -92,15 +92,17 @@ class SupermemoryHttpClient implements MemoryClient {
   }
 
   async get(tag: string): Promise<MemoryRecord[]> {
-    return this.search(tag, "", 100);
+    // Supermemory rejects empty query; use a benign wildcard that matches broadly
+    return this.search(tag, "*", 100);
   }
 
   async search(tag: string, query: string, limit = 5): Promise<MemoryRecord[]> {
+    const q = query && query.length > 0 ? query : "*";
     const res = await fetch(`${this.base}/search`, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({
-        q: query || "",
+        q,
         containerTags: [tag],
         limit,
       }),

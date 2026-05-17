@@ -1,9 +1,6 @@
-// Load .env from the lasso/ repo root so server + dashboard share one file.
-import { config as loadEnv } from "dotenv";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-const __dirname = dirname(fileURLToPath(import.meta.url));
-loadEnv({ path: resolve(__dirname, "../../.env") });
+// MUST be the first import — loads .env before any other module reads process.env.
+// ESM hoists imports, so a top-level loadEnv() call would run too late.
+import "./load-env.js";
 
 import Fastify from "fastify";
 import cors from "@fastify/cors";
