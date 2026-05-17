@@ -72,6 +72,12 @@ function init(): void {
   const config = readConfig();
   if (!config) return;
 
+  console.info(
+    `%c[lasso]%c loaded · merchant=${config.merchantId} · server=${config.serverUrl}`,
+    "background:#f59e0b;color:#1b1b1b;padding:2px 6px;border-radius:4px;font-weight:600",
+    "color:inherit",
+  );
+
   // Use watchForCheckout (not the one-shot detectCheckout) so SPA sites that
   // render the checkout form after a route change still get picked up. The
   // callback fires exactly once when detection succeeds.

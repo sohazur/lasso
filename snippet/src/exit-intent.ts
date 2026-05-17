@@ -16,7 +16,11 @@ import type { CheckoutSnapshot } from "./form-watcher.js";
 // Demo timings — fast on stage. Real product would use longer windows.
 const HIDDEN_GRACE_MS = 4000;
 const IDLE_MS = 60_000;
-const MIN_CART_TOTAL_CENTS = 1000;
+// 0 = no minimum. Real-world sites use a variety of currencies and price
+// formats (PKR, EUR, etc.) that our DOM cart-reader doesn't always parse
+// cleanly. Silently dropping events because the parser couldn't recover
+// cart_total_cents is a worse failure mode than calling on a cheap cart.
+const MIN_CART_TOTAL_CENTS = 0;
 
 export type AbandonTrigger = "exit_intent" | "idle" | "tab_hidden" | "page_hide" | "manual";
 

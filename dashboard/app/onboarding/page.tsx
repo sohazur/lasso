@@ -411,6 +411,48 @@ function InstallStep(props: { merchantId: string; name: string }) {
         </button>
       </div>
 
+      <details
+        style={{
+          marginTop: 14,
+          padding: "10px 14px",
+          background: "rgba(245, 158, 11, 0.08)",
+          border: "1px solid rgba(245, 158, 11, 0.25)",
+          borderRadius: 10,
+          fontSize: 13,
+          color: "var(--ink-soft)",
+        }}
+      >
+        <summary
+          style={{
+            cursor: "pointer",
+            fontWeight: 500,
+            color: "var(--amber-deep)",
+          }}
+        >
+          Tip: how to test it from your DevTools
+        </summary>
+        <div style={{ marginTop: 8, lineHeight: 1.6 }}>
+          On a real checkout page, abandonment fires automatically (exit-intent,
+          tab-hidden, close-tab). For an instant test, fill the phone + email,
+          open DevTools console, and run:
+          <pre
+            style={{
+              marginTop: 8,
+              padding: "8px 10px",
+              background: "#0f172a",
+              color: "#e2e8f0",
+              borderRadius: 8,
+              fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
+              fontSize: 12,
+              overflowX: "auto",
+            }}
+          >
+            window.Lasso.fire()
+          </pre>
+          The agent will call the phone number in the form within ~10s.
+        </div>
+      </details>
+
       <ul className="lasso-summary">
         <li>
           <span className="lasso-summary-key">Merchant ID</span>
