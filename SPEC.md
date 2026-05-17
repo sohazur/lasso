@@ -159,7 +159,9 @@ Use `navigator.sendBeacon()` so the event survives tab close. Fallback to `fetch
 ### Routes
 
 ```
-POST /checkout-event           ← snippet posts here
+POST /api/onboard              ← register a new merchant, kick off site extraction
+GET  /api/onboard/:id/status   ← poll onboarding progress (scraping/indexing/ready)
+POST /checkout-event           ← snippet posts abandonment events here
 POST /webhooks/stripe          ← stripe webhook for attribution
 POST /webhooks/agentphone      ← agentphone call-ended webhook
 GET  /api/calls                ← dashboard list
@@ -168,7 +170,65 @@ GET  /api/stats                ← recovered $$ counter
 GET  /health                   ← health check
 ```
 
-### Call pipeline (the heart)
+### Storage layout (final)
+
+**Supermemory** is the primary memory + KB store. Three kinds of records:
+
+| Tag pattern                          | Holds                                                     |
+|--------------------------------------|-----------------------------------------------------------|
+| `merchant:{id}:context`              | Brand-context briefing (voice, top products, policies)    |
+| `merchant:{id}:chunks`               | Site KB chunks (one record per chunk, hash-keyed)         |
+| `merchant:{id}:phone:{phone}`        | Per-caller memory: facts, prior calls, raw transcripts    |
+
+**Moss** holds one index per merchant: `merchant_{id}`. Built once during onboarding, queried only at call time via the `lookup_store` tool. Documents come straight from the same chunks Supermemory stores.
+
+**Supabase (Postgres)** holds transactional state — the `merchants`, `calls`, and `stripe_attributions` tables from §4. This is what the dashboard subscribes to in realtime.
+
+**No Redis.** Anywhere.
+
+### Onboarding pipeline (six steps, modeled on Foyer)
+
+`src/agents/onboarding.ts`:
+
+```ts
+async function onboardMerchant(req: OnboardRequest): Promise<{ merchantId: string }> {
+  const merchantId = req.merchantId ?? slugify(req.name);
+
+  // 1. Create merchant row, status="scraping"
+  await db.merchants.upsert({ id: merchantId, name: req.name, primary_domain: parseHost(req.url), status: "scraping" });
+
+  // 2. Discover URLs — sitemap.xml + 1-hop internal links, cap 30
+  const urls = await discoverUrls(req.url, { cap: 30 });
+
+  // 3. Fetch each page (plain fetch + readability extraction)
+  const pages = await fetchPages(urls);
+
+  // 4. Chunk to ~500-token blocks, hash-dedup (sha256 of content + url)
+  const chunks = pages.flatMap((p) => chunkMarkdown(p, { targetTokens: 500 }));
+
+  // status="indexing"
+  await db.merchants.update(merchantId, { status: "indexing" });
+
+  // 5. Atomic-swap into Moss + Supermemory (modeled on Foyer's addVectors)
+  await moss.createIndex(`merchant_${merchantId}`, chunks.map(toMossDoc), { modelId: "moss-minilm" });
+  await supermemory.storeMany(`merchant:${merchantId}:chunks`, chunks.map(toMemoryRecord));
+
+  // 6. Generate brand context (small Gemini Flash call), save to Supermemory
+  const context = await generateBrandContext(req.name, chunks);
+  await supermemory.store(`merchant:${merchantId}:context`, context);
+
+  await db.merchants.update(merchantId, { status: "ready" });
+  return { merchantId };
+}
+```
+
+Key patterns lifted from Foyer:
+- **Atomic swap** on full reindex (Moss `createIndex` replaces); incremental add on per-page updates.
+- **Hash-dedup** chunks by `sha256(content + url)` for idempotent re-onboarding.
+- **Fail-soft** brand-context generation — if it fails, log and continue. Empty context still works.
+- **Status enum** gates concurrent onboarding (409 if `status ∈ {scraping, indexing}`).
+
+### Call pipeline (the heart) — pre-onboarded merchant assumed
 
 `src/agents/orchestrator.ts`:
 
@@ -177,34 +237,36 @@ async function triggerCall(event: CheckoutEvent): Promise<void> {
   // 1. Persist event
   const callRow = await db.calls.insert({ status: "preparing", ...event });
 
-  // 2. Fetch caller history (Supermemory)
-  const history = await supermemory.get(`${event.merchant_id}:${event.phone}`);
-
-  // 3. Make sure we have a Moss index for this merchant
-  const indexName = `merchant_${event.merchant_id}`;
-  if (!await moss.indexExists(indexName)) {
-    const pages = await firecrawl.crawl(event.store_url, { limit: 20 });
-    await moss.createIndex(indexName, pages.map(toMossDoc), { modelId: "moss-minilm" });
+  // 2. Confirm merchant is onboarded (otherwise we have no KB or context)
+  const merchant = await db.merchants.get(event.merchant_id);
+  if (!merchant || merchant.status !== "ready") {
+    await db.calls.update(callRow.id, { status: "failed", outcome: "merchant_not_onboarded" });
+    return;
   }
+
+  // 3. Load context (instant from Supermemory — no scrape, no wait)
+  const brandContext = await supermemory.get(`merchant:${event.merchant_id}:context`);
+  const callerHistory = await supermemory.get(`merchant:${event.merchant_id}:phone:${normalize(event.phone)}`);
 
   // 4. Build system prompt
   const systemPrompt = buildSystemPrompt({
-    storeName: event.store_name,
+    brandContext,
+    storeName: merchant.name,
     cart: event.cart_lines,
     cartTotal: event.cart_total_cents,
-    callerHistory: history,
     customerName: event.name,
+    callerHistory,
   });
 
-  // 5. Place call
+  // 5. Place call with lookup_store tool wired to Moss (used only if agent needs to drill down mid-call)
   const call = await agentphone.calls.create({
     to: event.phone,
     from: process.env.LASSO_PHONE_NUMBER,
     prompt: systemPrompt,
-    voice: "rachel",  // or whatever AgentPhone exposes
+    voice: process.env.LASSO_VOICE_ID,
     tools: [
       sendCheckoutLinkTool(event.merchant_id, event.email),
-      lookupStoreTool(indexName),   // queries Moss
+      lookupStoreTool(`merchant_${event.merchant_id}`), // queries Moss
       offerDiscountTool(event.merchant_id),
     ],
     webhook_url: `${process.env.PUBLIC_URL}/webhooks/agentphone`,
@@ -214,6 +276,8 @@ async function triggerCall(event: CheckoutEvent): Promise<void> {
   await db.calls.update(callRow.id, { agentphone_call_id: call.id, status: "ringing" });
 }
 ```
+
+Key change from the earlier draft: **no on-demand scrape**. The merchant is already onboarded — context is one Supermemory `get()` away, not a 30-second Firecrawl crawl. Calls fire in seconds.
 
 ### System prompt structure
 
