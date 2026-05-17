@@ -87,11 +87,8 @@ function init(): void {
     snapshot: () => watcher.getSnapshot(),
   };
 
-  // Cleanup if the page is unloaded normally (best effort)
-  window.addEventListener("pagehide", () => {
-    watcher.stop();
-    abandonment.stop();
-  }, { once: true });
+  // No pagehide cleanup — the abandonment-watch module owns its own pagehide
+  // listener and we want that to fire *before* anything tears down.
 }
 
 function summarizeSnapshot(snap: CheckoutSnapshot): Record<string, unknown> {

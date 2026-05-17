@@ -1,12 +1,14 @@
 /**
  * Abandonment triggers.
  *
- * Three signals:
+ * Four signals:
  *   - exit_intent: mouse leaves viewport at the top edge
- *   - tab_hidden: visibilitychange → hidden, then no return within HIDDEN_GRACE_MS
- *   - idle: no user input for IDLE_MS after first phone capture
+ *   - tab_hidden:  visibilitychange → hidden, then no return within HIDDEN_GRACE_MS
+ *   - page_hide:   pagehide fires when the tab is actually closing or navigating
+ *                  away. Fires immediately — no grace window possible.
+ *   - idle:        no user input for IDLE_MS after first phone capture
  *
- * Fires once per page load. Guards: consent_given, valid phone, cart_total over threshold.
+ * Fires once per page load. Guards: valid phone, cart_total over threshold.
  */
 
 import type { CheckoutSnapshot } from "./form-watcher.js";
@@ -16,7 +18,7 @@ const HIDDEN_GRACE_MS = 4000;
 const IDLE_MS = 60_000;
 const MIN_CART_TOTAL_CENTS = 1000;
 
-export type AbandonTrigger = "exit_intent" | "idle" | "tab_hidden" | "manual";
+export type AbandonTrigger = "exit_intent" | "idle" | "tab_hidden" | "page_hide" | "manual";
 
 export type ExitIntentHandle = {
   fire: (trigger?: AbandonTrigger) => void;
@@ -64,6 +66,14 @@ export function startAbandonmentWatch(
     }
   }
 
+  // Page hide — fires when the tab is actually closing or navigating away.
+  // This is our only reliable signal for "tab closed". No grace window possible:
+  // by the time pagehide fires, we have milliseconds before the page is destroyed.
+  // sendCheckoutEvent uses navigator.sendBeacon which survives unload.
+  function onPageHide(): void {
+    attemptFire("page_hide");
+  }
+
   // Idle — reset on any activity; start counting once we have a phone number
   let idleArmed = false;
   function armIdleIfReady(): void {
@@ -86,6 +96,7 @@ export function startAbandonmentWatch(
 
   document.addEventListener("mouseout", onMouseOut);
   document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("pagehide", onPageHide);
   document.addEventListener("input", onActivity, { passive: true });
   document.addEventListener("mousemove", onActivity, { passive: true });
   document.addEventListener("scroll", onActivity, { passive: true });
@@ -94,6 +105,7 @@ export function startAbandonmentWatch(
   function teardown(): void {
     document.removeEventListener("mouseout", onMouseOut);
     document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener("pagehide", onPageHide);
     document.removeEventListener("input", onActivity);
     document.removeEventListener("mousemove", onActivity);
     document.removeEventListener("scroll", onActivity);
