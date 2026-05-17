@@ -30,6 +30,36 @@ export function getSharedAgent(): SharedAgentInfo | null {
 export async function ensureSharedAgent(): Promise<SharedAgentInfo> {
   if (_shared) return _shared;
 
+  // Fast path: if .env tells us which agent + number to use, trust it and skip
+  // the listAgents() round-trip. Useful when AgentPhone's API is slow or down.
+  if (env.sharedAgentId) {
+    _shared = {
+      agentId: env.sharedAgentId,
+      numberId: env.sharedNumberId ?? null,
+      phoneNumber: env.lassoPhoneNumber ?? null,
+      webhookSecret: null, // we'll register webhook lazily below if PUBLIC_URL is set
+    };
+    console.log(
+      `[lasso] shared-agent: using env-configured agent=${_shared.agentId} number=${_shared.phoneNumber ?? "none"}`
+    );
+
+    // Best-effort webhook re-register (don't block boot if it fails)
+    if (env.publicUrl?.startsWith("https://")) {
+      const ap = getAgentPhone();
+      const webhookUrl = `${env.publicUrl}/webhooks/agentphone-turn`;
+      ap.registerAgentWebhook(_shared.agentId, { url: webhookUrl, contextLimit: 10 })
+        .then((wh) => {
+          _shared!.webhookSecret = wh.secret;
+          console.log(`[lasso] shared-agent: webhook registered at ${webhookUrl}`);
+        })
+        .catch((err) => {
+          console.warn("[lasso] shared-agent: webhook registration failed (continuing)", err);
+        });
+    }
+
+    return _shared;
+  }
+
   const ap = getAgentPhone();
 
   // 1. Find an existing agent named SHARED_AGENT_NAME, else create one in webhook mode

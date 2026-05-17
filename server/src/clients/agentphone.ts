@@ -160,14 +160,24 @@ class RealAgentPhoneClient implements AgentPhoneClient {
   constructor(private apiKey: string) {}
 
   private async request<T>(path: string, body?: unknown, method: "GET" | "POST" = "POST"): Promise<T> {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    // 15-second timeout — AgentPhone can be slow/unreachable; we don't want to
+    // hang the server boot or a webhook turn indefinitely.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    let res: Response;
+    try {
+      res = await fetch(`${BASE_URL}${path}`, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     const text = await res.text();
     if (!res.ok) {
       throw new Error(`agentphone ${method} ${path} ${res.status}: ${text.slice(0, 600)}`);

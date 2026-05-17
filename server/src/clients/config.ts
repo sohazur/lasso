@@ -8,6 +8,10 @@ export const env = {
   // AgentPhone
   agentphoneKey: process.env.AGENTPHONE_API_KEY,
   lassoPhoneNumber: process.env.LASSO_PHONE_NUMBER,
+  // Pre-known shared agent IDs — if set, skip the listAgents() bootstrap call.
+  // Useful when AgentPhone's API is slow or down.
+  sharedAgentId: process.env.LASSO_SHARED_AGENT_ID,
+  sharedNumberId: process.env.LASSO_SHARED_NUMBER_ID,
 
   // Supermemory
   supermemoryKey: process.env.SUPERMEMORY_API_KEY,
