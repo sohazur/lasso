@@ -13,7 +13,7 @@ export default function Home() {
     let cancelled = false;
     async function tick() {
       try {
-        const [c, s] = await Promise.all([listCalls(undefined, 25), getStats()]);
+        const [c, s] = await Promise.all([listCalls(undefined, 50), getStats()]);
         if (cancelled) return;
         setCalls(c);
         setStats(s);
@@ -34,24 +34,20 @@ export default function Home() {
   }, []);
 
   return (
-    <main className="lasso-shell" style={{ maxWidth: 1100 }}>
+    <main className="lasso-shell dashboard">
       <header
         className="lasso-header"
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: 16,
-        }}
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}
       >
         <div style={{ flex: 1 }}>
-          <span className="lasso-eyebrow">Lasso</span>
-          <h1 className="lasso-h1">Recovered checkouts</h1>
+          <span className="lasso-eyebrow">Recovered checkouts</span>
+          <h1 className="lasso-h1">Live call log</h1>
           <p className="lasso-sub">
-            One script tag. Every abandoned cart gets a callback in under 60
-            seconds.{" "}
-            <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>
-              · live, refreshes every 2s
+            One script tag, voice agent calls back within 60 seconds of an
+            abandoned checkout.{" "}
+            <span className="lasso-live">
+              <span className="lasso-dot" />
+              live · refreshing every 2 s
             </span>
           </p>
         </div>
@@ -60,23 +56,16 @@ export default function Home() {
         </a>
       </header>
 
-      {error && <div className="lasso-error" style={{ marginBottom: 24 }}>{error}</div>}
+      {error && <div className="lasso-error">{error}</div>}
 
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 16,
-          marginBottom: 24,
-        }}
-      >
+      <section className="lasso-stats">
         <Stat
           label="Recovered today"
           value={fmtMoney(stats?.recovered_cents_today)}
           sub={`${stats?.recovered_calls ?? 0} recovered all-time`}
         />
         <Stat
-          label="Calls placed"
+          label="Calls today"
           value={String(stats?.calls_today ?? 0)}
           sub={`${stats?.total_calls ?? 0} all-time`}
         />
@@ -87,35 +76,18 @@ export default function Home() {
               ? `${Math.round(stats.connect_rate * 100)}%`
               : "—"
           }
-          sub={`${stats?.connected_calls ?? 0} of ${stats?.total_calls ?? 0}`}
+          sub={`${stats?.connected_calls ?? 0} of ${stats?.total_calls ?? 0} connected`}
         />
       </section>
 
-      <section className="lasso-card" style={{ padding: 24 }}>
-        <h2
-          style={{
-            fontSize: 18,
-            fontWeight: 600,
-            margin: "0 0 16px",
-            letterSpacing: "-0.01em",
-          }}
-        >
-          Recent calls
-        </h2>
+      <section className="lasso-card" style={{ padding: 28 }}>
+        <h2 className="lasso-section-title">Recent calls</h2>
         {loading ? (
-          <p style={{ color: "var(--ink-faint)", fontSize: 14, margin: 0 }}>
-            Loading…
-          </p>
+          <p className="lasso-empty">Loading…</p>
         ) : calls.length === 0 ? (
-          <p style={{ color: "var(--ink-muted)", fontSize: 14, margin: 0 }}>
+          <p className="lasso-empty">
             No calls yet.{" "}
-            <a
-              href="/onboarding"
-              style={{ color: "var(--amber-deep)", textDecoration: "underline" }}
-            >
-              Onboard a store
-            </a>{" "}
-            to drop in the script tag and start recovering checkouts.
+            <a href="/onboarding">Onboard a store</a> to start recovering checkouts.
           </p>
         ) : (
           <CallsTable calls={calls} />
@@ -127,76 +99,60 @@ export default function Home() {
 
 function CallsTable({ calls }: { calls: CallRow[] }) {
   return (
-    <div
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 16,
-        overflow: "hidden",
-        background: "#fff",
-      }}
-    >
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+    <div className="lasso-table-wrap">
+      <table className="lasso-table">
         <thead>
-          <tr style={{ background: "rgba(247,244,237,0.6)", textAlign: "left" }}>
-            <Th>When</Th>
-            <Th>Merchant</Th>
-            <Th>Caller</Th>
-            <Th>Cart</Th>
-            <Th>Status</Th>
-            <Th>Outcome</Th>
-            <Th>Trigger</Th>
-            <Th></Th>
+          <tr>
+            <th>When</th>
+            <th>Merchant</th>
+            <th>Caller</th>
+            <th>Cart</th>
+            <th>Status</th>
+            <th>Outcome</th>
+            <th>Trigger</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
           {calls.map((c) => (
-            <tr key={c.id} style={{ borderTop: "1px solid var(--border)" }}>
-              <Td>{fmtTime(c.created_at)}</Td>
-              <Td>
+            <tr key={c.id}>
+              <td>{fmtTime(c.created_at)}</td>
+              <td>
                 <code className="lasso-chip">{c.merchant_id}</code>
-              </Td>
-              <Td>
+              </td>
+              <td>
                 {c.customer_name ? (
                   <>
-                    <div style={{ fontWeight: 500 }}>{c.customer_name}</div>
-                    <div style={{ color: "var(--ink-faint)", fontSize: 12 }}>
-                      {c.phone}
-                    </div>
+                    <div className="lasso-caller-name">{c.customer_name}</div>
+                    <div className="lasso-caller-phone">{c.phone}</div>
                   </>
                 ) : (
-                  c.phone
+                  <span className="lasso-caller-phone">{c.phone}</span>
                 )}
-              </Td>
-              <Td>
+              </td>
+              <td>
                 <CartCell call={c} />
-              </Td>
-              <Td>
+              </td>
+              <td>
                 <StatusPill status={c.status} />
-              </Td>
-              <Td>
+              </td>
+              <td>
                 {c.outcome ? (
                   <OutcomePill outcome={c.outcome} />
                 ) : (
                   <span style={{ color: "var(--ink-faint)" }}>—</span>
                 )}
-              </Td>
-              <Td>
+              </td>
+              <td>
                 <span style={{ color: "var(--ink-muted)", fontSize: 12 }}>
                   {c.trigger ?? "—"}
                 </span>
-              </Td>
-              <Td>
-                <a
-                  href={`/calls/${c.id}`}
-                  style={{
-                    color: "var(--amber-deep)",
-                    textDecoration: "none",
-                    fontWeight: 500,
-                  }}
-                >
+              </td>
+              <td>
+                <a href={`/calls/${c.id}`} className="row-link">
                   view →
                 </a>
-              </Td>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -211,148 +167,31 @@ function CartCell({ call }: { call: CallRow }) {
   const total = call.cart_total_cents;
   return (
     <>
-      <div>
+      <div className="lasso-cart-title">
         {item?.title ?? <span style={{ color: "var(--ink-faint)" }}>—</span>}
       </div>
       {typeof total === "number" && (
-        <div style={{ color: "var(--ink-muted)", fontSize: 12 }}>
-          {fmtMoney(total)}
-        </div>
+        <div className="lasso-cart-price">{fmtMoney(total)}</div>
       )}
     </>
   );
 }
 
 function StatusPill({ status }: { status: CallRow["status"] }) {
-  const colors: Record<CallRow["status"], { bg: string; fg: string }> = {
-    preparing: { bg: "#f3f4f6", fg: "#374151" },
-    ringing: { bg: "#fef3c7", fg: "#92400e" },
-    connected: { bg: "#dbeafe", fg: "#1e40af" },
-    completed: { bg: "#d1fae5", fg: "#065f46" },
-    failed: { bg: "#fee2e2", fg: "#991b1b" },
-    no_answer: { bg: "#f3f4f6", fg: "#6b7280" },
-  };
-  const c = colors[status];
-  return <Pill bg={c.bg} fg={c.fg}>{status.replace("_", " ")}</Pill>;
+  return <span className={`lasso-pill ${status}`}>{status.replace("_", " ")}</span>;
 }
 
 function OutcomePill({ outcome }: { outcome: NonNullable<CallRow["outcome"]> }) {
-  const colors: Record<
-    NonNullable<CallRow["outcome"]>,
-    { bg: string; fg: string }
-  > = {
-    recovered: { bg: "#d1fae5", fg: "#065f46" },
-    declined: { bg: "#fee2e2", fg: "#991b1b" },
-    unreachable: { bg: "#f3f4f6", fg: "#6b7280" },
-    error: { bg: "#fef2f2", fg: "#991b1b" },
-  };
-  const c = colors[outcome];
-  return <Pill bg={c.bg} fg={c.fg}>{outcome}</Pill>;
+  return <span className={`lasso-pill ${outcome}`}>{outcome}</span>;
 }
 
-function Pill({
-  bg,
-  fg,
-  children,
-}: {
-  bg: string;
-  fg: string;
-  children: React.ReactNode;
-}) {
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "3px 9px",
-        borderRadius: 999,
-        background: bg,
-        color: fg,
-        fontSize: 11,
-        fontWeight: 600,
-        textTransform: "uppercase",
-        letterSpacing: 0.4,
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  sub,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-}) {
-  return (
-    <div
-      style={{
-        padding: 20,
-        borderRadius: 24,
-        border: "1px solid var(--border)",
-        background: "rgba(255, 255, 255, 0.85)",
-        boxShadow: "var(--shadow-soft)",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 11,
-          color: "var(--ink-muted)",
-          textTransform: "uppercase",
-          letterSpacing: "0.08em",
-          marginBottom: 8,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: 28,
-          fontWeight: 600,
-          letterSpacing: "-0.02em",
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {value}
-      </div>
-      {sub && (
-        <div
-          style={{
-            fontSize: 12,
-            color: "var(--ink-faint)",
-            marginTop: 6,
-          }}
-        >
-          {sub}
-        </div>
-      )}
+    <div className="lasso-stat">
+      <div className="lasso-stat-label">{label}</div>
+      <div className="lasso-stat-value">{value}</div>
+      {sub && <div className="lasso-stat-sub">{sub}</div>}
     </div>
-  );
-}
-
-function Th({ children }: { children?: React.ReactNode }) {
-  return (
-    <th
-      style={{
-        padding: "12px 14px",
-        fontWeight: 600,
-        color: "var(--ink-muted)",
-        fontSize: 11,
-        textTransform: "uppercase",
-        letterSpacing: 0.6,
-      }}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({ children }: { children?: React.ReactNode }) {
-  return (
-    <td style={{ padding: "12px 14px", verticalAlign: "top" }}>{children}</td>
   );
 }
 
