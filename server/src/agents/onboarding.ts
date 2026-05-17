@@ -83,7 +83,10 @@ async function runPipelineInBackground(req: OnboardRequest): Promise<void> {
 
   await db.updateMerchant(merchantId, { status: "indexing" });
 
-  // Step 5: atomic-swap into Moss + Supermemory
+  // Step 5: atomic-swap into Moss + Supermemory.
+  // Moss is best-effort — if it fails we still want the merchant ready because
+  // Supermemory drives the brand context. The agent loses live KB lookups but
+  // can still take recovery calls.
   const indexName = `merchant_${merchantId}`;
   const memTag = `merchant:${merchantId}:chunks`;
 
@@ -96,7 +99,11 @@ async function runPipelineInBackground(req: OnboardRequest): Promise<void> {
         metadata: { pageUrl: c.pageUrl, pageTitle: c.pageTitle, sectionTitle: c.sectionTitle },
       }))
     );
+  } catch (err) {
+    console.warn(`[lasso] onboarding ${merchantId}: Moss indexing failed (continuing without live KB lookups)`, err);
+  }
 
+  try {
     // Reset Supermemory chunks (best-effort delete; if not supported, just storeMany on top)
     try {
       await getMemory().delete(memTag);
@@ -110,7 +117,7 @@ async function runPipelineInBackground(req: OnboardRequest): Promise<void> {
       }))
     );
   } catch (err) {
-    console.error(`[lasso] onboarding ${merchantId}: indexing failed`, err);
+    console.error(`[lasso] onboarding ${merchantId}: Supermemory indexing failed`, err);
     await db.updateMerchant(merchantId, { status: "failed", failed_step: "indexing" });
     return;
   }

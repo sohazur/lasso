@@ -59,9 +59,16 @@ class MockFirecrawl implements SiteExtractor {
 
 class FirecrawlHttp implements SiteExtractor {
   private base = "https://api.firecrawl.dev/v1";
+  private mockFallback = new MockFirecrawl();
   constructor(private apiKey: string) {}
 
   async crawl(rootUrl: string, options: { limit?: number } = {}): Promise<CrawledPage[]> {
+    // Firecrawl rejects localhost/internal URLs — fall back to mock so the demo
+    // store works end-to-end on a developer's laptop.
+    if (isLocalUrl(rootUrl)) {
+      console.warn(`[lasso] firecrawl: ${rootUrl} is a local URL, falling back to mock pages`);
+      return this.mockFallback.crawl(rootUrl, options);
+    }
     const limit = options.limit ?? 20;
     const headers = {
       "Content-Type": "application/json",
@@ -103,6 +110,23 @@ class FirecrawlHttp implements SiteExtractor {
       if (j.status === "failed") throw new Error(`firecrawl crawl failed`);
     }
     throw new Error(`firecrawl crawl timed out after 3 minutes`);
+  }
+}
+
+function isLocalUrl(u: string): boolean {
+  try {
+    const url = new URL(u);
+    return (
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "0.0.0.0" ||
+      url.hostname.endsWith(".local") ||
+      /^192\.168\./.test(url.hostname) ||
+      /^10\./.test(url.hostname) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(url.hostname)
+    );
+  } catch {
+    return false;
   }
 }
 
