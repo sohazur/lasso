@@ -4,9 +4,12 @@
  * Boot path:
  *   1. Read merchant_id from <script data-merchant="...">
  *   2. Detect if this page is a checkout (heuristics)
- *   3. If yes: render consent banner, attach form watcher + abandonment triggers
- *   4. On abandonment + consent + valid phone: POST event to backend
+ *   3. If yes: attach form watcher, log snapshot deltas
+ *      (consent banner, exit-intent, event sender wire in next)
  */
+
+import { detectCheckout } from "./checkout-detector.js";
+import { startWatcher, type CheckoutSnapshot } from "./form-watcher.js";
 
 type LassoConfig = {
   merchantId: string;
@@ -29,13 +32,29 @@ function init(): void {
   const config = readConfig();
   if (!config) return;
 
-  // TODO: checkout-detector.ts — heuristics for is-checkout-page
+  const detection = detectCheckout();
+  if (!detection.isCheckout) {
+    console.debug("[lasso] not a checkout page, standing down");
+    return;
+  }
+
+  console.log(
+    `[lasso] checkout detected (${detection.platform}, ${detection.confidence}): ${detection.reason}`
+  );
+
+  startWatcher(detection.platform, (snap: CheckoutSnapshot) => {
+    console.log("[lasso] snapshot:", {
+      phone: snap.phone,
+      email: snap.email,
+      name: snap.name,
+      cart: snap.cart_lines.length,
+      total_cents: snap.cart_total_cents,
+    });
+  });
+
   // TODO: consent-banner.ts — slide-in opt-in UI
-  // TODO: form-watcher.ts — capture phone/email/cart deltas
   // TODO: exit-intent.ts — mouse-toward-chrome + idle + visibility triggers
   // TODO: client.ts — POST /checkout-event via sendBeacon
-
-  console.log("[lasso] initialized for merchant:", config.merchantId);
 }
 
 if (document.readyState === "loading") {
