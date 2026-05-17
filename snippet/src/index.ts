@@ -51,8 +51,21 @@ function readConfig(): LassoConfig | null {
     console.warn("[lasso] missing data-merchant attribute on script tag");
     return null;
   }
-  const serverUrl = script.dataset.server ?? "https://lasso.example/api";
+  // Default: post events back to the same server the snippet was loaded from.
+  // The script tag's src is the source of truth — strip /snippet.js to get
+  // the API base. An explicit data-server attr overrides this for advanced setups.
+  const serverUrl = script.dataset.server ?? deriveServerUrlFromScript(script);
   return { merchantId, serverUrl };
+}
+
+function deriveServerUrlFromScript(script: HTMLScriptElement): string {
+  try {
+    const src = new URL(script.src);
+    // Strip trailing /snippet.js (or any path) so we land at the origin root.
+    return `${src.origin}`;
+  } catch {
+    return "https://lasso.example/api";
+  }
 }
 
 function init(): void {
