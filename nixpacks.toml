@@ -1,0 +1,14 @@
+# Nixpacks build plan for the Lasso server workspace.
+# Repo root contains an npm workspaces monorepo; Railway builds at the root.
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "npm"]
+
+[phases.install]
+cmds = ["npm ci --workspaces --include-workspace-root"]
+
+[phases.build]
+cmds = ["npm run --workspace server build"]
+
+[start]
+cmd = "npm run --workspace server start"

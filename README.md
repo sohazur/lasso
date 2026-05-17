@@ -117,7 +117,55 @@ lasso/
 └── demo-store/   ← Fake e-commerce site for stage backup
 ```
 
-## Getting started
+## Deploying the server to Railway
+
+Server-only deploy. Dashboard stays local; demo store stays local. Railway gives us a stable HTTPS URL for AgentPhone webhooks (replaces ngrok).
+
+1. **Create a new Railway project** at [railway.app](https://railway.app)
+   - Click "New Project" → "Deploy from GitHub repo" → pick `sohazur/lasso`
+   - Railway will read `railway.json` + `nixpacks.toml` from the repo root
+   - Build will run `npm ci` at root + `npm run --workspace server build`
+   - Start command: `npm run --workspace server start`
+   - Health check: `GET /health`
+
+2. **Add env vars** (Railway dashboard → your service → Variables tab):
+   ```
+   AGENTPHONE_API_KEY            (from .env)
+   LASSO_PHONE_NUMBER            (from .env)
+   LASSO_SHARED_AGENT_ID         (from .env)
+   SUPABASE_URL                  (from .env)
+   SUPABASE_SERVICE_KEY          (from .env)
+   SUPERMEMORY_API_KEY           (from .env)
+   MOSS_PROJECT_ID               (from .env)
+   MOSS_PROJECT_KEY              (from .env)
+   FIRECRAWL_API_KEY             (from .env)
+   OPENROUTER_API_KEY            (from .env)
+   OPENROUTER_MODEL              (from .env)
+   PUBLIC_URL                    https://<your-app>.up.railway.app   ← set this after first deploy
+   ```
+
+3. **Generate a public domain** in Railway: Settings → Networking → "Generate Domain" → copy the URL.
+
+4. **Set `PUBLIC_URL`** in Variables to the URL you just got. Redeploy. On boot the server will auto-register the AgentPhone webhook at `PUBLIC_URL/webhooks/agentphone-turn`.
+
+5. **Verify:**
+   ```bash
+   curl https://your-app.up.railway.app/health
+   # → {"ok":true,"service":"lasso-server"}
+   ```
+
+6. **Point the demo snippet at production** by editing `demo-store/index.html`:
+   ```html
+   <script src="..." data-merchant="demo" data-server="https://your-app.up.railway.app"></script>
+   ```
+   (Or leave it as `localhost:3001` for local dev.)
+
+The local dashboard (`npm run dev:dashboard`) talks to whatever `NEXT_PUBLIC_LASSO_SERVER` env var you set when you run it, defaulting to `http://localhost:3001`. To point it at Railway:
+```bash
+NEXT_PUBLIC_LASSO_SERVER=https://your-app.up.railway.app npm run dev:dashboard
+```
+
+## Getting started (local dev)
 
 ```bash
 # Install deps for all workspaces
