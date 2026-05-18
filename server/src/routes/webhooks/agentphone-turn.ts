@@ -150,6 +150,12 @@ async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
     ? `${cartLine.qty ?? 1}× ${cartLine.title ?? "an item"}${cartLine.price_cents ? ` ($${(cartLine.price_cents / 100).toFixed(2)})` : ""}`
     : "their cart";
 
+  // Coupon code (if the merchant pre-authorized one in their private context)
+  const couponCode = pickDiscountCode(merchant.private_context);
+  const couponBlock = couponCode
+    ? `COUPON YOU MAY OFFER: "${couponCode}". Mention it ONCE if the customer hesitates on price or sounds price-sensitive — phrase it like a perk, not a hard sell. The SMS we send will include it automatically.`
+    : "";
+
   const history = (ev.recentHistory ?? [])
     .map((h) => `${h.direction === "inbound" ? "Customer" : "You"}: ${h.content}`)
     .join("\n");
@@ -179,6 +185,8 @@ CONTEXT FOR THIS CALL
 ${playbookBlock}
 
 ${brandBriefBlock}
+
+${couponBlock}
 
 ${brand ? `MERCHANT SITE BRIEFING:\n${brand}` : ""}
 
@@ -223,23 +231,56 @@ The customer just said: "${customerMessage}"`;
 
   console.log(`[lasso] webhook-turn: LLM raw="${raw.slice(0, 200)}" parsed=${JSON.stringify(parsed)}`);
 
-  // 5. Side effects (SMS) — do this BEFORE returning the response
+  // 5. Side effects (SMS) — do this BEFORE returning the response so we can
+  // adjust the spoken text if SMS fails.
+  let smsResult: { ok: true; body: string } | { ok: false; error: string } | null = null;
   if (parsed.send_sms) {
     console.log(`[lasso] webhook-turn: send_sms=true, firing SMS to ${call.phone}`);
-    await sendCheckoutSmsBestEffort({
+    const discountCode = pickDiscountCode(merchant.private_context);
+    smsResult = await sendCheckoutSms({
       merchantName: merchant.name,
       toNumber: call.phone,
       pageUrl: call.page_url ?? null,
       customerName: call.customer_name ?? null,
+      cartLines: (call.cart_lines as Array<{ title?: string; qty?: number; price_cents?: number }>) ?? [],
+      discountCode,
     });
+    // Mirror the result onto the call row so the dashboard shows what
+    // happened — helpful for demo debugging.
+    if (smsResult.ok) {
+      console.log(`[lasso] webhook-turn: SMS sent. body="${smsResult.body}"`);
+    } else {
+      console.error(`[lasso] webhook-turn: SMS failed — ${smsResult.error}`);
+      // Patch the call row with a failure note so it shows up in /calls/:id
+      try {
+        await db.updateCall(call.id, {
+          failed_reason: `SMS send failed: ${smsResult.error}`.slice(0, 500),
+        });
+      } catch {
+        /* best-effort */
+      }
+    }
   }
 
-  // 6. Translate to AgentPhone response shape
-  const response: TurnResponse = { text: parsed.text ?? "Got it." };
+  // 6. Translate to AgentPhone response shape. If SMS failed, override
+  // whatever the LLM was going to say with an honest fallback so the
+  // agent doesn't hallucinate "I can't send the text right now" with
+  // no useful info.
+  let speakText = parsed.text ?? "Got it.";
+  if (parsed.send_sms && smsResult && !smsResult.ok) {
+    speakText = `I'm hitting a hiccup with our texting system — I'll have ${merchant.name} email you the link instead.`;
+  }
+  const response: TurnResponse = { text: speakText };
   if (parsed.hangup) response.hangup = true;
   if (parsed.action === "transfer") response.action = "transfer";
 
   return response;
+}
+
+function pickDiscountCode(pc: Record<string, unknown> | null | undefined): string | undefined {
+  if (!pc) return undefined;
+  const candidate = pc["discount_code"] ?? pc["coupon"] ?? pc["coupon_code"];
+  return typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : undefined;
 }
 
 type ParsedTurn = {
@@ -267,29 +308,39 @@ function parseTurnJson(raw: string): ParsedTurn {
   }
 }
 
-async function sendCheckoutSmsBestEffort(args: {
+type SmsAttempt =
+  | { ok: true; body: string }
+  | { ok: false; error: string };
+
+async function sendCheckoutSms(args: {
   merchantName: string;
   toNumber: string;
   pageUrl: string | null;
   customerName: string | null;
-}): Promise<void> {
+  cartLines: Array<{ title?: string; qty?: number; price_cents?: number }>;
+  discountCode: string | undefined;
+}): Promise<SmsAttempt> {
   const shared = getSharedAgent();
   if (!shared) {
-    console.warn("[lasso] sendCheckoutSms: shared agent not initialized");
-    return;
+    return { ok: false, error: "shared agent not initialized" };
   }
-  // Page URL is captured from the snippet at abandonment time and points
-  // directly at the merchant's checkout route (e.g.
-  // https://saaya.netlify.app/checkout for the Saaya demo). No Stripe
-  // Checkout session needed — the customer resumes where they left off.
   if (!args.pageUrl) {
-    console.warn("[lasso] sendCheckoutSms: no page_url on call row — skipping");
-    return;
+    return { ok: false, error: "no page_url on call row" };
   }
+
+  const link = buildCheckoutResumeUrl({
+    pageUrl: args.pageUrl,
+    cartLines: args.cartLines,
+    discountCode: args.discountCode,
+  });
+
   const firstName = args.customerName?.split(/\s+/)[0];
   const opener = firstName ? `Hi ${firstName}` : "Hey";
-  const body =
-    `${opener}! It's ${args.merchantName}. Here's your checkout link so you can finish whenever: ${args.pageUrl}`;
+  const couponLine = args.discountCode
+    ? ` Use code ${args.discountCode} for a little something on us.`
+    : "";
+  const body = `${opener}! It's ${args.merchantName}. Resume your checkout here: ${link}.${couponLine}`;
+
   console.log(
     `[lasso] sendCheckoutSms: → agent=${shared.agentId} to=${args.toNumber} body="${body}"`,
   );
@@ -303,9 +354,44 @@ async function sendCheckoutSmsBestEffort(args: {
     console.log(
       `[lasso] sendCheckoutSms: SMS sent to ${args.toNumber}, id=${res.id ?? "?"} status=${res.status ?? "?"}`,
     );
+    return { ok: true, body };
   } catch (err) {
-    console.error("[lasso] sendCheckoutSms: sendMessage threw", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[lasso] sendCheckoutSms: sendMessage threw — ${msg}`, err);
+    return { ok: false, error: msg };
   }
+}
+
+/**
+ * Build a deep-link URL the customer can click to resume checkout.
+ *
+ * We append a `#lasso=<base64json>` hash with cart + coupon. The Saaya
+ * SPA reads this on load and restores the cart + applies the coupon
+ * automatically. Using `#` (not query string) so it isn't sent to
+ * Netlify/Saaya's edge logs.
+ */
+function buildCheckoutResumeUrl(args: {
+  pageUrl: string;
+  cartLines: Array<{ title?: string; qty?: number; price_cents?: number }>;
+  discountCode: string | undefined;
+}): string {
+  // Strip any existing hash on the page_url so we own it.
+  const base = args.pageUrl.split("#")[0] ?? args.pageUrl;
+  const payload: Record<string, unknown> = {};
+  if (args.cartLines.length > 0) {
+    payload.cart = args.cartLines.map((l) => ({
+      title: l.title,
+      qty: l.qty ?? 1,
+      price_cents: l.price_cents,
+    }));
+  }
+  if (args.discountCode) {
+    payload.coupon = args.discountCode;
+  }
+  if (Object.keys(payload).length === 0) return base;
+  const json = JSON.stringify(payload);
+  const b64 = Buffer.from(json, "utf8").toString("base64url");
+  return `${base}#lasso=${b64}`;
 }
 
 function looksLikeQuestion(s: string): boolean {
