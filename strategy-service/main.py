@@ -10,6 +10,7 @@ from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
@@ -22,6 +23,7 @@ log = logging.getLogger("recovery")
 
 from strategy import get_concern_playbook
 from prompt_builder import build_call_prompt
+from voice_agent import run_claude_with_tools
 import agentphone_client
 import stripe_client
 
@@ -69,9 +71,11 @@ async def abandon(request: Request):
     if not to_number:
         return {"status": "error", "error": "customer.phone missing"}
 
+    # Webhook mode: do NOT pass system_prompt to AgentPhone. The agent calls
+    # /api/voice on every turn and Claude drives the conversation. We still
+    # store system_prompt locally so the voice webhook can read it.
     call_id = agentphone_client.place_call(
         to_number=to_number,
-        system_prompt=system_prompt,
         opening_greeting=opening,
     )
     log.info("call placed: %s → %s", call_id, to_number)
@@ -94,6 +98,79 @@ async def abandon(request: Request):
     }
 
 
+@app.post("/api/voice")
+async def voice_webhook(request: Request):
+    """Per-turn voice webhook — Claude drives the conversation loop.
+
+    AgentPhone POSTs here on every agent turn in webhook mode. We respond with
+    NDJSON streaming: an interim chunk first (so the caller hears something
+    quickly), then the final Claude-generated text. If Claude calls the
+    transfer_to_founder tool, the final chunk also carries action: "transfer".
+    """
+    payload = await request.json()
+
+    if payload.get("channel") and payload.get("channel") != "voice":
+        return {"ok": True}
+
+    # Defensive call_id extraction across plausible payload shapes.
+    call_id = (
+        payload.get("callId")
+        or payload.get("call_id")
+        or (payload.get("data") or {}).get("callId")
+        or (payload.get("data") or {}).get("call_id")
+    )
+    if not call_id:
+        log.warning("voice webhook: no call_id in payload: %s", list(payload.keys()))
+        return {"text": "Sorry, give me one moment."}
+
+    ctx = call_contexts.get(call_id)
+    if not ctx:
+        log.warning("voice webhook: no context for call_id=%s — falling back", call_id)
+        # Don't break the call — provide a sane generic response.
+        return {"text": "Hi, this is Sarah from Saaya. How can I help?"}
+
+    # Build message history from AgentPhone's payload.
+    recent = payload.get("recentHistory") or payload.get("recent_history") or []
+    messages: list[dict] = []
+    for turn in recent:
+        if not isinstance(turn, dict):
+            continue
+        direction = turn.get("direction") or turn.get("role") or "inbound"
+        content = turn.get("content") or turn.get("text") or ""
+        if not content:
+            continue
+        role = "assistant" if direction in ("outbound", "agent", "assistant") else "user"
+        messages.append({"role": role, "content": content})
+
+    # Claude requires first message to be user. If the call just connected
+    # and the agent's initial_greeting is the only thing so far, the history
+    # starts with the agent. Prepend a placeholder user turn.
+    if not messages or messages[0]["role"] != "user":
+        messages.insert(0, {"role": "user", "content": "(call just connected)"})
+
+    system_prompt = ctx.get("system_prompt") or build_call_prompt(ctx["session"])[0]
+
+    async def generate():
+        # 1) Interim chunk — buys time while Claude thinks.
+        yield json.dumps({"text": "...", "interim": True}) + "\n"
+
+        # 2) Run Claude (with tool-use loop). Returns {"text", "action"}.
+        result = await run_claude_with_tools(
+            system_prompt=system_prompt,
+            messages=messages,
+            call_id=call_id,
+            session=ctx["session"],
+            call_contexts=call_contexts,
+        )
+
+        final = {"text": result.get("text") or "Okay."}
+        if result.get("action") == "transfer":
+            final["action"] = "transfer"
+        yield json.dumps(final) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
 @app.post("/api/agentphone-webhook")
 async def agentphone_webhook(request: Request):
     event = await request.json()
@@ -104,45 +181,88 @@ async def agentphone_webhook(request: Request):
         return {"status": "ignored", "event": event_type}
 
     data = event.get("data") or event
-    call_id = data.get("call_id") or data.get("id") or event.get("call_id")
-    transcript = data.get("transcript") or data.get("transcripts") or []
+    call_id = data.get("call_id") or data.get("id") or data.get("callId") or event.get("call_id")
 
     ctx = call_contexts.get(call_id)
     if not ctx:
         log.warning("no context for call_id=%s — ignoring", call_id)
         return {"status": "no_context", "call_id": call_id}
 
+    # PATH A (webhook mode): Claude already authorized a payment link
+    # mid-call via the send_payment_link tool. The Stripe link is already
+    # generated and queued.
+    pending = ctx.get("pending_sms")
+    if pending:
+        return await _send_payment_sms(call_id, ctx, pending)
+
+    # PATH B (fallback): legacy hosted-mode flow — re-analyze the transcript
+    # with Claude to decide post-hoc. Useful while migrating between modes.
+    transcript = data.get("transcript") or data.get("transcripts") or []
     decision = await _evaluate_transcript(transcript, ctx)
     log.info("transcript decision: %s", decision)
 
     if not decision.get("agreed_to_pay"):
         return {"status": "no_payment", "call_id": call_id, "decision": decision}
 
-    cart = ctx["session"].get("cart", {})
-    customer = ctx["session"].get("customer", {})
-    final_total = decision.get("final_total_cents") or int(round(cart.get("total", 0) * 100))
-    product_name = ", ".join(it.get("name", "item") for it in cart.get("items", [])) or "Your LAM order"
-
-    payment_url = stripe_client.create_payment_link(
-        amount_cents=final_total,
-        product_name=product_name,
-        customer_email=customer.get("email"),
-    )
-    log.info("stripe payment link: %s", payment_url)
-
-    message = (
-        f"Hi {customer.get('name', 'there').split()[0]}, here's your payment link: "
-        f"{payment_url} — see you soon!"
-    )
-    sms_id = agentphone_client.send_sms(to_number=customer["phone"], message=message)
-    log.info("sms sent: %s", sms_id)
-
-    return {
-        "status": "payment_sent",
-        "call_id": call_id,
-        "payment_url": payment_url,
-        "sms_id": sms_id,
+    cart_total = ctx["session"].get("cart", {}).get("total", 0)
+    final_dollars = (decision.get("final_total_cents") / 100) if decision.get("final_total_cents") else float(cart_total)
+    fallback_pending = {
+        "url": None,  # generate fresh below
+        "total": final_dollars,
+        "discount": decision.get("reason", "no discount"),
     }
+    return await _send_payment_sms(call_id, ctx, fallback_pending)
+
+
+async def _send_payment_sms(call_id: str, ctx: dict, pending: dict) -> dict:
+    """Generate the Stripe link (if not already) and SMS it to the customer."""
+    customer = ctx["session"].get("customer", {}) or {}
+    cart = ctx["session"].get("cart", {}) or {}
+
+    payment_url = pending.get("url")
+    if not payment_url:
+        items = cart.get("items", []) or []
+        product_name = f"Saaya order — {len(items)} item{'s' if len(items) != 1 else ''}"
+        try:
+            payment_url = stripe_client.create_payment_link(
+                amount_cents=int(round(float(pending["total"]) * 100)),
+                product_name=product_name,
+                customer_email=customer.get("email"),
+            )
+        except Exception as e:
+            log.error("stripe link generation failed: %s", e)
+            return {"status": "stripe_failed", "call_id": call_id, "error": str(e)}
+
+    log.info("payment link for call %s: %s", call_id, payment_url)
+
+    first_name = (customer.get("name") or "there").split()[0]
+    body = (
+        f"Hi {first_name}! Here's your checkout link from Saaya 🌸\n"
+        f"{payment_url}\n\n"
+        f"Let me know if you need anything else — I'm here. — Sarah"
+    )
+
+    try:
+        sms_id = agentphone_client.send_sms(to_number=customer["phone"], message=body)
+        log.info("sms sent: %s", sms_id)
+        return {
+            "status": "payment_sent",
+            "call_id": call_id,
+            "payment_url": payment_url,
+            "sms_id": sms_id,
+        }
+    except Exception as e:
+        log.error("sms send failed (likely 10DLC block): %s", e)
+        # Capture the intended SMS so the dashboard can surface it.
+        ctx["sms_would_have_been"] = body
+        ctx["sms_error"] = str(e)
+        return {
+            "status": "sms_blocked",
+            "call_id": call_id,
+            "payment_url": payment_url,
+            "would_have_sent": body,
+            "error": str(e),
+        }
 
 
 @app.get("/api/calls/{call_id}")
