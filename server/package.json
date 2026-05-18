@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/agents/prompts && cp -R src/agents/prompts/. dist/agents/prompts/",
     "prestart": "npm run build --prefix ../snippet",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
