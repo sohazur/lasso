@@ -177,6 +177,12 @@ async function handleCallEnded(ev: WebhookEvent): Promise<void> {
       console.warn("[lasso] call_ended: persisting transcript to supermemory failed", err);
     }
   }
+
+  // Now the call is fully ended, fire any queued SMS. AgentPhone won't
+  // accept /messages while a call is in progress, so this is the only
+  // safe time. Don't await — caller (the webhook handler) needs to
+  // return 200 quickly to avoid retries.
+  void dispatchQueuedSms(call.id, call.merchant_id);
 }
 
 async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
@@ -314,13 +320,17 @@ INSTRUCTIONS:
     {"text": "..."}                            (continue the call)
     {"text": "...", "hangup": true}            (say this then end)
     {"text": "ok one sec", "action": "transfer"}  (transfer to human)
-    {"text": "Sending the link now.", "send_sms": true}  (we'll text them the checkout link)
+    {"text": "I'll text you the link right after we hang up.", "send_sms": true}
+       (we queue the SMS; it sends the moment the call ends)
 - Don't say more than 2 sentences per turn.
 - Don't invent coupon codes. Use only what's in the private context.
 - ALWAYS proactively offer the checkout link by SMS in the first 2 turns:
   "Want me to text you the link so you can finish whenever?" — if the
   customer says yes/sure/please/sounds good/etc, set "send_sms": true
-  and confirm warmly.
+  and tell them you'll send it as soon as the call ends. NEVER say
+  "sending the link now" or "I'll send it right now" — the text only
+  fires after we hang up. Phrasing: "I'll text it the moment we hang
+  up" or "you'll get it the second this call ends".
 - If the customer asks for the checkout link, set "send_sms": true.
 - If you can't help and the customer needs a human, use "action": "transfer".
 - ONLY set "hangup": true if the customer explicitly asks you to stop,
@@ -346,50 +356,73 @@ The customer just said: "${customerMessage}"`;
 
   console.log(`[lasso] webhook-turn: LLM raw="${raw.slice(0, 200)}" parsed=${JSON.stringify(parsed)}`);
 
-  // 5. Side effects (SMS) — do this BEFORE returning the response so we can
-  // adjust the spoken text if SMS fails.
-  let smsResult: { ok: true; body: string } | { ok: false; error: string } | null = null;
+  // 5. SMS — AgentPhone explicitly does NOT allow sending SMS while a
+  // call is in progress on the same line. So we don't send here; we
+  // queue the payload and dispatch it from handleCallEnded() once the
+  // call hangs up. The agent's spoken response should promise the
+  // text "as soon as we hang up".
   if (parsed.send_sms) {
-    console.log(`[lasso] webhook-turn: send_sms=true, firing SMS to ${call.phone}`);
     const discountCode = pickDiscountCode(merchant.private_context);
-    smsResult = await sendCheckoutSms({
+    queuePostCallSms(call.id, {
       merchantName: merchant.name,
       toNumber: call.phone,
       pageUrl: call.page_url ?? null,
       customerName: call.customer_name ?? null,
-      cartLines: (call.cart_lines as Array<{ title?: string; qty?: number; price_cents?: number }>) ?? [],
+      cartLines:
+        (call.cart_lines as Array<{ title?: string; qty?: number; price_cents?: number }>) ?? [],
       discountCode,
     });
-    // Mirror the result onto the call row so the dashboard shows what
-    // happened — helpful for demo debugging.
-    if (smsResult.ok) {
-      console.log(`[lasso] webhook-turn: SMS sent. body="${smsResult.body}"`);
-    } else {
-      console.error(`[lasso] webhook-turn: SMS failed — ${smsResult.error}`);
-      // Patch the call row with a failure note so it shows up in /calls/:id
-      try {
-        await db.updateCall(call.id, {
-          failed_reason: `SMS send failed: ${smsResult.error}`.slice(0, 500),
-        });
-      } catch {
-        /* best-effort */
-      }
-    }
+    console.log(`[lasso] webhook-turn: queued SMS for call ${call.id}`);
   }
 
-  // 6. Translate to AgentPhone response shape. If SMS failed, override
-  // whatever the LLM was going to say with an honest fallback so the
-  // agent doesn't hallucinate "I can't send the text right now" with
-  // no useful info.
-  let speakText = parsed.text ?? "Got it.";
-  if (parsed.send_sms && smsResult && !smsResult.ok) {
-    speakText = `I'm hitting a hiccup with our texting system — I'll have ${merchant.name} email you the link instead.`;
-  }
-  const response: TurnResponse = { text: speakText };
+  // 6. Translate to AgentPhone response shape.
+  const response: TurnResponse = { text: parsed.text ?? "Got it." };
   if (parsed.hangup) response.hangup = true;
   if (parsed.action === "transfer") response.action = "transfer";
 
   return response;
+}
+
+// ───────────── Post-call SMS queue ─────────────
+type PendingSms = {
+  merchantName: string;
+  toNumber: string;
+  pageUrl: string | null;
+  customerName: string | null;
+  cartLines: Array<{ title?: string; qty?: number; price_cents?: number }>;
+  discountCode: string | undefined;
+};
+
+const pendingSmsByCallId = new Map<string, PendingSms>();
+
+function queuePostCallSms(callId: string, payload: PendingSms): void {
+  pendingSmsByCallId.set(callId, payload);
+}
+
+async function dispatchQueuedSms(
+  callId: string,
+  merchantId: string,
+): Promise<void> {
+  const pending = pendingSmsByCallId.get(callId);
+  if (!pending) return;
+  pendingSmsByCallId.delete(callId);
+
+  const result = await sendCheckoutSms(pending);
+  if (result.ok) {
+    console.log(`[lasso] post-call SMS sent for call ${callId}. body="${result.body}"`);
+    return;
+  }
+  console.error(`[lasso] post-call SMS failed for call ${callId} — ${result.error}`);
+  // Surface to the dashboard so a failed SMS doesn't disappear into the void
+  try {
+    await getStore().updateCall(callId, {
+      failed_reason: `SMS send failed (post-call): ${result.error}`.slice(0, 500),
+    });
+  } catch {
+    /* best-effort */
+  }
+  // Touch merchantId so the param isn't unused (future: per-merchant fallback channels)
+  void merchantId;
 }
 
 function pickDiscountCode(pc: Record<string, unknown> | null | undefined): string | undefined {
@@ -525,8 +558,14 @@ function verifySignature(req: FastifyRequest): boolean {
   // We also enforce a 5-minute timestamp window to prevent replays.
   const sig = (req.headers["x-webhook-signature"] as string | undefined) ?? "";
   const ts = (req.headers["x-webhook-timestamp"] as string | undefined) ?? "";
-  const rawBody =
-    (req as unknown as { rawBody?: string }).rawBody ?? JSON.stringify(req.body ?? {});
+  const rawBody = (req as unknown as { rawBody?: string }).rawBody;
+  if (!rawBody) {
+    // No raw body captured — this is a fastify-raw-body wiring bug. Bail
+    // safely (allow) and log so we can fix it rather than reject every
+    // delivery as malformed.
+    console.warn("[lasso] webhook-turn: rawBody is missing — allowing (fix rawBody plugin config)");
+    return true;
+  }
 
   if (!sig.startsWith("sha256=")) {
     console.warn("[lasso] webhook-turn: missing/malformed signature header — allowing for now");

@@ -203,15 +203,58 @@ function readStripeCart(): CartReadResult {
 }
 
 function readGenericCart(): CartReadResult {
-  // Heuristic: any element with class containing "line-item" or "cart-item"
-  const els = document.querySelectorAll('[class*="line-item"], [class*="cart-item"], [class*="lineItem"]');
+  // Widened heuristic to cover common real-world checkout markup we've
+  // seen in the wild:
+  //   - line-item / cart-item / lineItem (classic)
+  //   - checkout-piece / order-piece / cart-product (Saaya + variations)
+  //   - data attributes like data-cart-line / data-product-id
+  const sel = [
+    '[class*="line-item"]',
+    '[class*="cart-item"]',
+    '[class*="lineItem"]',
+    '[class*="cart-line"]',
+    '[class*="cart-product"]',
+    '[class*="checkout-piece"]',
+    '[class*="order-piece"]',
+    '[class*="bag-item"]',
+    '[class*="cart-row"]',
+    '[data-cart-line]',
+    '[data-product-id]',
+  ].join(",");
+  const els = document.querySelectorAll(sel);
   const lines: CartLine[] = [];
   els.forEach((el) => {
-    const title = el.querySelector('[class*="title"], [class*="name"], h2, h3, h4')?.textContent?.trim();
-    const priceText = el.querySelector('[class*="price"], [class*="amount"]')?.textContent?.trim();
-    if (title || priceText) lines.push({ title, price_cents: priceText ? parsePriceCents(priceText) : undefined });
+    // Title: try semantic class, then headings, then any inner text fallback
+    const title =
+      el.querySelector('[class*="title"], [class*="name"], [class*="product"], h2, h3, h4')
+        ?.textContent?.trim() ||
+      el.getAttribute("data-product-title") ||
+      undefined;
+    const priceText = el
+      .querySelector('[class*="price"], [class*="amount"], [class*="cost"], [class*="total"]')
+      ?.textContent?.trim();
+    // Qty: classes like checkout-piece-qty, line-item-qty, span containing "×N"
+    const qtyText =
+      el.querySelector('[class*="qty"], [class*="quantity"], [class*="count"]')
+        ?.textContent?.trim() || "";
+    const qtyMatch = qtyText.match(/\d+/);
+    const qty = qtyMatch && qtyMatch[0] ? parseInt(qtyMatch[0], 10) : undefined;
+
+    if (title || priceText) {
+      lines.push({
+        title: title || undefined,
+        qty,
+        price_cents: priceText ? parsePriceCents(priceText) : undefined,
+      });
+    }
   });
-  return { lines };
+  // Try total — many sites have a clearly-labeled total row
+  const totalEl = document.querySelector(
+    '[class*="total"][class*="grand"], [class*="order-total"], [class*="cart-total"]',
+  );
+  const totalText = totalEl?.textContent?.trim();
+  const total = totalText ? parsePriceCents(totalText) : undefined;
+  return { lines, total_cents: total };
 }
 
 function parsePriceCents(text: string): number | undefined {
