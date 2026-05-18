@@ -282,11 +282,69 @@ async function handleCallEnded(ev: WebhookEvent): Promise<void> {
     }
   }
 
+  // Fallback: if AgentPhone never delivered any voice turn webhooks (so
+  // our handleVoiceTurn never ran and never queued an SMS), scan the
+  // transcript for SMS-intent and synthesize a queued SMS from scratch.
+  // This makes the demo SMS-after-call work even when AgentPhone is
+  // doing voice mode entirely in its built-in agent.
+  if (!pendingSmsByCallId.has(call.id) && transcript) {
+    const wantsSms = transcriptImpliesSmsIntent(transcript);
+    if (wantsSms) {
+      console.log(
+        `[lasso] call_ended: no queued SMS but transcript implies intent — synthesizing SMS for call ${call.id}`,
+      );
+      const merchant = await db.getMerchant(call.merchant_id);
+      if (merchant) {
+        // Pull merchant's brand context to extract a coupon if present.
+        let brandBriefText: string | null = null;
+        try {
+          const recs = await getMemory().get(`merchant:${call.merchant_id}:context`);
+          brandBriefText = recs[0]?.text ?? null;
+        } catch {
+          /* best effort */
+        }
+        const discountCode = pickDiscountCode(brandBriefText, merchant.private_context);
+        queuePostCallSms(call.id, {
+          merchantName: merchant.name,
+          toNumber: call.phone,
+          pageUrl: call.page_url ?? null,
+          customerName: call.customer_name ?? null,
+          cartLines:
+            (call.cart_lines as Array<{
+              title?: string;
+              qty?: number;
+              price_cents?: number;
+            }>) ?? [],
+          discountCode,
+        });
+      }
+    }
+  }
+
   // Now the call is fully ended, fire any queued SMS. AgentPhone won't
   // accept /messages while a call is in progress, so this is the only
   // safe time. Don't await — caller (the webhook handler) needs to
   // return 200 quickly to avoid retries.
   void dispatchQueuedSms(call.id, call.merchant_id);
+}
+
+/**
+ * Scan a call transcript for signals that the customer wanted the
+ * checkout link texted to them. Both sides matter: the customer asking
+ * ("text me the link") AND the agent offering to ("I'll send the link").
+ * If either side mentioned it, we fire SMS as a fallback.
+ */
+function transcriptImpliesSmsIntent(transcript: string): boolean {
+  const t = transcript.toLowerCase();
+  // Customer-side signals
+  const customerWants =
+    /\b(text|send|sms)[^.!?]{0,40}\b(me|the|that|over|across|now|please|sure|yes|yeah|okay|ok)\b/.test(t) ||
+    /\b(yeah|yes|sure|okay|ok|please)[^.!?]{0,40}\b(text|send|sms|link)\b/.test(t) ||
+    /\b(send me|text me|sms me)\b/.test(t);
+  // Agent-side signals (the agent offered to send it, demo intent)
+  const agentOffered =
+    /\b(i'?ll|i will|going to|sending|send)[^.!?]{0,40}\b(text|sms|link|checkout link)\b/.test(t);
+  return customerWants || agentOffered;
 }
 
 async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
