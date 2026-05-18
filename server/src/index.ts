@@ -73,6 +73,10 @@ app.get("/health", async () => {
             : "auto_registered",
         }
       : null,
+    sms_routing: {
+      imessage_number_id: process.env.LASSO_IMESSAGE_NUMBER_ID ?? null,
+      effective_channel: process.env.LASSO_IMESSAGE_NUMBER_ID ? "imessage" : "sms_via_voice_line",
+    },
   };
 });
 
