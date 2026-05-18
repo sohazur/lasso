@@ -45,6 +45,28 @@ async function loadPrompt(filename: string): Promise<string | null> {
  * by the canonical seed. We're generous about overwriting: short strings,
  * placeholder words, and obvious "todo" markers all count.
  */
+/**
+ * Compare two strings normalized so that whitespace/case differences don't
+ * matter. We use this for fingerprinting known weak/template content that we
+ * want the seed to overwrite even though it passes the length check.
+ */
+function normalizeForMatch(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Known stub / template phrases that mean "this slot was never customised".
+ * Seed will overwrite any content that includes these phrases — even if the
+ * stored text is long, because it's clearly the previous-version seed
+ * template, not a real merchant edit.
+ */
+const KNOWN_WEAK_FINGERPRINTS = [
+  "replace this with merchant-specific context", // brand_brief default template
+  "describe what the merchant sells and the competitive context", // brand_brief default template
+  "describe how the merchant sounds", // earlier behavior placeholder
+  "i saw were trying buy xyz", // user's manually-typed weak behavior
+];
+
 function isPlaceholder(content: string | null): boolean {
   if (!content) return true;
   const trimmed = content.trim();
@@ -54,8 +76,22 @@ function isPlaceholder(content: string | null): boolean {
   if (lc === "test" || lc === "todo" || lc === "tbd") return true;
   // Catch the weak hand-typed Sarah behavior from earlier demos.
   if (lc.includes("xyz") && lc.includes("sarah")) return true;
+  // Fingerprint-based detection — overrides the length check.
+  const norm = normalizeForMatch(content);
+  for (const fp of KNOWN_WEAK_FINGERPRINTS) {
+    if (norm.includes(normalizeForMatch(fp))) return true;
+  }
   return false;
 }
+
+/**
+ * Force-overwrite slots that are stale relative to the canonical seed.
+ * Set via env: SEED_FORCE_OVERWRITE=true (or just FORCE_RESEED=true).
+ * Useful when the canonical content evolves and the placeholder detector
+ * can't catch a long-but-still-stale stored value.
+ */
+const FORCE_RESEED =
+  process.env.SEED_FORCE_OVERWRITE === "true" || process.env.FORCE_RESEED === "true";
 
 async function seedOne(
   merchantId: string,
@@ -66,7 +102,7 @@ async function seedOne(
   if (prompts.behavior) {
     try {
       const existing = await db.getStrategySlot(merchantId, "behavior");
-      if (isPlaceholder(existing)) {
+      if (FORCE_RESEED || isPlaceholder(existing)) {
         await db.setStrategySlot(merchantId, "behavior", prompts.behavior);
         console.log(`[lasso] seed: wrote default behavior for ${merchantId} (${prompts.behavior.length} chars)`);
       }
@@ -78,7 +114,7 @@ async function seedOne(
   if (prompts.brandBrief) {
     try {
       const existing = await db.getStrategySlot(merchantId, "brand_brief");
-      if (isPlaceholder(existing)) {
+      if (FORCE_RESEED || isPlaceholder(existing)) {
         await db.setStrategySlot(merchantId, "brand_brief", prompts.brandBrief);
         console.log(`[lasso] seed: wrote default brand_brief for ${merchantId} (${prompts.brandBrief.length} chars)`);
       }
@@ -90,7 +126,7 @@ async function seedOne(
   if (prompts.playbooks) {
     try {
       const existing = await db.getStrategySlot(merchantId, "playbooks");
-      if (isPlaceholder(existing)) {
+      if (FORCE_RESEED || isPlaceholder(existing)) {
         await db.setStrategySlot(merchantId, "playbooks", prompts.playbooks);
         console.log(`[lasso] seed: wrote default playbooks for ${merchantId} (${prompts.playbooks.length} chars)`);
       }

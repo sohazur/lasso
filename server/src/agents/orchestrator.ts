@@ -188,8 +188,12 @@ function buildOpener(
   const firstName = customerName?.split(/\s+/)[0];
   const greet = firstName ? `Hi ${firstName}` : "Hi there";
 
-  // Item phrasing — single, dual, or "a few pieces" for 3+
-  const titles = (cartLines ?? []).map((l) => l.title).filter(Boolean) as string[];
+  // Item phrasing — single, dual, or "a few pieces" for 3+. Dedupe so
+  // multi-variant carts (e.g. same product in two sizes) don't read as
+  // "the Zara, the Zara, and 2 others".
+  const titles = Array.from(
+    new Set((cartLines ?? []).map((l) => l.title).filter(Boolean) as string[]),
+  );
   let itemPhrase: string;
   if (titles.length === 0) {
     itemPhrase = "the piece you were looking at";

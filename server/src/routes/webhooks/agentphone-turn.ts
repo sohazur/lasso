@@ -252,15 +252,31 @@ async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
     }
   }
 
-  // 3. Build LLM prompt
-  const allCartLines =
+  // 3. Build LLM prompt — fold duplicate titles into a single line so
+  // multi-variant carts don't read like "1× Zara, 1× Zara, 1× Zara".
+  const rawLines =
     (call.cart_lines as Array<{ title?: string; qty?: number; price_cents?: number }>) ?? [];
+  const allCartLines: Array<{ title?: string; qty: number; price_cents?: number }> = [];
+  {
+    const byTitle = new Map<string, { title?: string; qty: number; price_cents?: number }>();
+    for (const l of rawLines) {
+      const key = (l.title ?? "").toLowerCase().trim() || `__anon_${allCartLines.length}`;
+      const existing = byTitle.get(key);
+      if (existing) {
+        existing.qty += l.qty ?? 1;
+      } else {
+        const next = { title: l.title, qty: l.qty ?? 1, price_cents: l.price_cents };
+        byTitle.set(key, next);
+        allCartLines.push(next);
+      }
+    }
+  }
   const cartSummary =
     allCartLines.length === 0
       ? "their cart (we didn't capture the specific items)"
       : allCartLines
           .slice(0, 3)
-          .map((l) => `${l.qty ?? 1}× ${l.title ?? "item"}`)
+          .map((l) => `${l.qty}× ${l.title ?? "item"}`)
           .join(", ") + (allCartLines.length > 3 ? `, and ${allCartLines.length - 3} more` : "");
 
   const customerFirstName = call.customer_name?.split(/\s+/)[0] ?? null;
