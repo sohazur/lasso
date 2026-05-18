@@ -9,7 +9,9 @@
 
 import { getStore } from "../clients/supabase.js";
 
-const DEMO_MERCHANT = "demo";
+// Merchants we want seeded with sensible defaults on first boot. Real
+// merchants will overwrite these via the dashboard (/sarah).
+const SEED_MERCHANTS = ["demo", "saaya-netlify-app"];
 
 const DEFAULT_BEHAVIOR = `You are Sarah, a personal shopping assistant. You're calling a customer who didn't finish checkout. Your job is to help her — not to sell.
 
@@ -122,40 +124,50 @@ const DEFAULT_PLAYBOOKS = {
   fallback: "order_review",
 };
 
-export async function seedDefaultStrategy(): Promise<void> {
+async function seedOne(merchantId: string): Promise<void> {
   const db = getStore();
 
+  // Treat empty string / "test" / "todo" as unseeded so demo placeholders
+  // get overwritten on next boot.
+  const isPlaceholder = (s: string | null) => {
+    if (!s) return true;
+    const trimmed = s.trim().toLowerCase();
+    return trimmed === "" || trimmed === "test" || trimmed === "todo" || trimmed === "tbd";
+  };
+
   try {
-    const existing = await db.getStrategySlot(DEMO_MERCHANT, "behavior");
-    if (!existing) {
-      await db.setStrategySlot(DEMO_MERCHANT, "behavior", DEFAULT_BEHAVIOR);
-      console.log("[lasso] seed: wrote default behavior for demo");
+    const existing = await db.getStrategySlot(merchantId, "behavior");
+    if (isPlaceholder(existing)) {
+      await db.setStrategySlot(merchantId, "behavior", DEFAULT_BEHAVIOR);
+      console.log(`[lasso] seed: wrote default behavior for ${merchantId}`);
     }
   } catch (err) {
-    console.warn("[lasso] seed: behavior failed (continuing)", err);
+    console.warn(`[lasso] seed: behavior failed for ${merchantId} (continuing)`, err);
   }
 
   try {
-    const existing = await db.getStrategySlot(DEMO_MERCHANT, "brand_brief");
-    if (!existing) {
-      await db.setStrategySlot(DEMO_MERCHANT, "brand_brief", DEFAULT_BRAND_BRIEF);
-      console.log("[lasso] seed: wrote default brand_brief for demo");
+    const existing = await db.getStrategySlot(merchantId, "brand_brief");
+    if (isPlaceholder(existing)) {
+      await db.setStrategySlot(merchantId, "brand_brief", DEFAULT_BRAND_BRIEF);
+      console.log(`[lasso] seed: wrote default brand_brief for ${merchantId}`);
     }
   } catch (err) {
-    console.warn("[lasso] seed: brand_brief failed (continuing)", err);
+    console.warn(`[lasso] seed: brand_brief failed for ${merchantId} (continuing)`, err);
   }
 
   try {
-    const existing = await db.getStrategySlot(DEMO_MERCHANT, "playbooks");
-    if (!existing) {
-      await db.setStrategySlot(
-        DEMO_MERCHANT,
-        "playbooks",
-        JSON.stringify(DEFAULT_PLAYBOOKS, null, 2),
-      );
-      console.log("[lasso] seed: wrote default playbooks for demo");
+    const existing = await db.getStrategySlot(merchantId, "playbooks");
+    if (isPlaceholder(existing)) {
+      await db.setStrategySlot(merchantId, "playbooks", JSON.stringify(DEFAULT_PLAYBOOKS, null, 2));
+      console.log(`[lasso] seed: wrote default playbooks for ${merchantId}`);
     }
   } catch (err) {
-    console.warn("[lasso] seed: playbooks failed (continuing)", err);
+    console.warn(`[lasso] seed: playbooks failed for ${merchantId} (continuing)`, err);
+  }
+}
+
+export async function seedDefaultStrategy(): Promise<void> {
+  for (const merchantId of SEED_MERCHANTS) {
+    await seedOne(merchantId);
   }
 }

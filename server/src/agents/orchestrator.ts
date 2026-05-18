@@ -187,15 +187,26 @@ function buildOpener(
 ): string {
   const firstName = customerName?.split(/\s+/)[0];
   const greet = firstName ? `Hi ${firstName}` : "Hi there";
-  const item = cartLines?.[0]?.title;
-  const itemPhrase = item ? `the ${item}` : "the piece you were looking at";
-  const cartCount = cartLines?.length ?? 0;
-  const pieces =
-    cartCount > 1 ? ` and ${cartCount - 1} other piece${cartCount > 2 ? "s" : ""}` : "";
-  // Open warm, name the cart item, end with an open question so the
-  // customer has something specific to respond to. The previous version
-  // ("got a sec?") gave a yes/no out and the agent often hung up on silence.
-  return `${greet}, this is ${merchantName}. I saw you were just looking at ${itemPhrase}${pieces} on our site — is there anything I can help you figure out before you check out?`;
+
+  // Item phrasing — single, dual, or "a few pieces" for 3+
+  const titles = (cartLines ?? []).map((l) => l.title).filter(Boolean) as string[];
+  let itemPhrase: string;
+  if (titles.length === 0) {
+    itemPhrase = "the piece you were looking at";
+  } else if (titles.length === 1) {
+    itemPhrase = `the ${titles[0]}`;
+  } else if (titles.length === 2) {
+    itemPhrase = `the ${titles[0]} and the ${titles[1]}`;
+  } else {
+    itemPhrase = `a few pieces — the ${titles[0]}, the ${titles[1]}, and ${
+      titles.length - 2
+    } other${titles.length - 2 === 1 ? "" : "s"}`;
+  }
+
+  // Warm, names the cart, ends with an open question — never a yes/no
+  // out. Framing: "in between" / "wanted to make sure" — never "you
+  // were trying to buy" or "you abandoned".
+  return `${greet}, this is ${merchantName}. I saw you were in the middle of checking out with ${itemPhrase} — I wanted to make sure nothing got in the way. Anything I can help you sort out?`;
 }
 
 function secondsSince(ms?: number): number {

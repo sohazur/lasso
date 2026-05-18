@@ -33,6 +33,8 @@ import { getAgentPhone } from "../../clients/agentphone.js";
 import { getStore } from "../../clients/supabase.js";
 import { getSharedAgent } from "../../agents/shared-agent.js";
 
+type CallEndedTranscriptTurn = { role?: string; content?: string };
+
 type WebhookEvent = {
   event: string;
   channel: string;
@@ -43,8 +45,19 @@ type WebhookEvent = {
     callId?: string;
     from?: string;
     to?: string;
+    // SMS / iMessage payloads use `message`; voice payloads use `transcript`.
     message?: string;
+    transcript?: string | CallEndedTranscriptTurn[];
+    confidence?: number;
+    status?: string;
     direction?: "inbound" | "outbound";
+    durationSeconds?: number;
+    startedAt?: string;
+    endedAt?: string;
+    disconnectionReason?: string;
+    summary?: string;
+    userSentiment?: string;
+    callSuccessful?: boolean;
   };
   conversationState?: Record<string, unknown>;
   recentHistory?: Array<{ content?: string; direction?: "inbound" | "outbound"; at?: string }>;
@@ -62,9 +75,21 @@ export async function registerAgentPhoneTurnWebhook(app: FastifyInstance): Promi
     }
 
     const ev = req.body as WebhookEvent;
-    console.log(`[lasso] webhook-turn: event=${ev.event} channel=${ev.channel} direction=${ev.data?.direction} from=${ev.data?.from} msg="${(ev.data?.message ?? "").slice(0, 80)}"`);
+    const voiceText =
+      typeof ev.data?.transcript === "string"
+        ? ev.data.transcript
+        : ev.data?.message ?? "";
+    console.log(
+      `[lasso] webhook-turn: event=${ev.event} channel=${ev.channel} direction=${ev.data?.direction} from=${ev.data?.from} content="${voiceText.slice(0, 80)}"`,
+    );
 
-    // Only handle inbound voice turns. SMS replies + outbound mirrors get logged.
+    // agent.call_ended is fire-and-forget — full final transcript + analysis.
+    if (ev.event === "agent.call_ended") {
+      await handleCallEnded(ev);
+      return reply.send({ ok: true });
+    }
+
+    // Only handle inbound voice turns for the conversational loop.
     if (ev.event !== "agent.message") {
       console.log(`[lasso] webhook-turn: unhandled event=${ev.event}`);
       return reply.send({});
@@ -84,9 +109,86 @@ export async function registerAgentPhoneTurnWebhook(app: FastifyInstance): Promi
   });
 }
 
+/**
+ * Persist the final transcript + status when AgentPhone fires
+ * agent.call_ended. Without this our call rows stay at `ringing`
+ * forever and the transcript card stays empty.
+ */
+async function handleCallEnded(ev: WebhookEvent): Promise<void> {
+  const callerNumber = ev.data.from ?? "";
+  const agentphoneCallId = ev.data.callId ?? ev.data.conversationId;
+  const db = getStore();
+
+  // Try to find the row by AgentPhone callId first, then fall back to
+  // the most recent active call for this phone.
+  const recent = await db.listCalls(undefined, 50);
+  let call =
+    recent.find((c) => agentphoneCallId && c.agentphone_call_id === agentphoneCallId) ?? null;
+  if (!call) {
+    const digits = callerNumber.replace(/\D/g, "");
+    call =
+      recent.find(
+        (c) =>
+          c.phone.replace(/\D/g, "") === digits &&
+          (c.status === "ringing" || c.status === "connected"),
+      ) ?? null;
+  }
+  if (!call) {
+    console.warn(`[lasso] call_ended: no matching call for ${agentphoneCallId ?? callerNumber}`);
+    return;
+  }
+
+  // Compose the transcript text from the array AgentPhone sends.
+  const transcript = Array.isArray(ev.data.transcript)
+    ? ev.data.transcript
+        .map((t) => {
+          const who = (t.role ?? "").toLowerCase() === "agent" ? "Agent" : "Customer";
+          return t.content ? `${who}: ${t.content}` : "";
+        })
+        .filter(Boolean)
+        .join("\n")
+    : typeof ev.data.transcript === "string"
+      ? ev.data.transcript
+      : null;
+
+  await db.updateCall(call.id, {
+    status: "completed",
+    duration_secs: ev.data.durationSeconds ?? call.duration_secs ?? null,
+    transcript: transcript ?? call.transcript ?? null,
+    ended_at: ev.data.endedAt ?? new Date().toISOString(),
+  });
+  console.log(`[lasso] call_ended: persisted transcript (${transcript?.length ?? 0} chars) for call ${call.id}`);
+
+  // Mirror transcript to Supermemory so the next call to this phone has it.
+  if (transcript) {
+    const tag = `merchant:${call.merchant_id}:phone:${callerNumber.replace(/\D/g, "")}`;
+    try {
+      await getMemory().store(tag, {
+        text: transcript,
+        metadata: {
+          call_id: call.id,
+          duration_secs: ev.data.durationSeconds ?? null,
+          summary: ev.data.summary ?? null,
+          sentiment: ev.data.userSentiment ?? null,
+          ended_at: new Date().toISOString(),
+        },
+      });
+    } catch (err) {
+      console.warn("[lasso] call_ended: persisting transcript to supermemory failed", err);
+    }
+  }
+}
+
 async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
   const callerNumber = ev.data.from ?? "";
-  const customerMessage = ev.data.message ?? "";
+  // Voice turns carry the customer's words in `data.transcript`. SMS turns
+  // use `data.message`. Accept either so the conversation loop works for
+  // both channels — and so it actually receives content (the previous
+  // `message`-only read was always empty for voice).
+  const customerMessage =
+    (typeof ev.data.transcript === "string" ? ev.data.transcript : "") ||
+    ev.data.message ||
+    "";
 
   // 1. Find the merchant from the most recent active call to this phone.
   // (In production: persist conversationId → call_row_id at placeCall time.
@@ -145,10 +247,17 @@ async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
   }
 
   // 3. Build LLM prompt
-  const cartLine = (call.cart_lines as Array<{ title?: string; qty?: number; price_cents?: number }>)?.[0];
-  const cartSummary = cartLine
-    ? `${cartLine.qty ?? 1}× ${cartLine.title ?? "an item"}${cartLine.price_cents ? ` ($${(cartLine.price_cents / 100).toFixed(2)})` : ""}`
-    : "their cart";
+  const allCartLines =
+    (call.cart_lines as Array<{ title?: string; qty?: number; price_cents?: number }>) ?? [];
+  const cartSummary =
+    allCartLines.length === 0
+      ? "their cart (we didn't capture the specific items)"
+      : allCartLines
+          .slice(0, 3)
+          .map((l) => `${l.qty ?? 1}× ${l.title ?? "item"}`)
+          .join(", ") + (allCartLines.length > 3 ? `, and ${allCartLines.length - 3} more` : "");
+
+  const customerFirstName = call.customer_name?.split(/\s+/)[0] ?? null;
 
   // Coupon code (if the merchant pre-authorized one in their private context)
   const couponCode = pickDiscountCode(merchant.private_context);
@@ -179,8 +288,14 @@ async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
 
 CONTEXT FOR THIS CALL
 - Merchant: ${merchant.name}
-- Customer cart: ${cartSummary}
-- They just abandoned this checkout — you called them back.
+- Customer: ${customerFirstName ?? "name unknown"}${call.customer_name ? ` (${call.customer_name})` : ""}
+- Phone: ${call.phone}
+- Cart they were looking at: ${cartSummary}
+- They were mid-checkout (not yet purchased) and stepped away. You
+  called them back — assume they're "in between" deciding, not that
+  they've definitely abandoned. Address them by first name if known.
+- Important: never say "you tried to buy" — phrase it as "I saw you
+  were looking at" or "I noticed you were checking out".
 
 ${playbookBlock}
 
@@ -405,37 +520,42 @@ function verifySignature(req: FastifyRequest): boolean {
   // Mock mode or webhook not registered: don't enforce
   if (!shared?.webhookSecret || shared.webhookSecret.startsWith("mock_")) return true;
 
-  // SIGNATURE VERIFICATION TEMPORARILY BYPASSED while we figure out the exact
-  // payload format AgentPhone is signing. Without docs explicitly stating the
-  // canonical form, our hash mismatches and every webhook gets 401'd, which
-  // breaks the whole demo. The webhook URL is ngrok-secret-enough that an
-  // attacker would need to guess our random-subdomain URL to inject bad data.
-  // We'll restore strict verification once we confirm the spec.
+  // AgentPhone signs `${timestamp}.${rawBody}` with HMAC-SHA256, not the
+  // body alone. See docs: https://docs.agentphone.ai/.../webhooks#signatures
+  // We also enforce a 5-minute timestamp window to prevent replays.
   const sig = (req.headers["x-webhook-signature"] as string | undefined) ?? "";
-  const rawBody = (req as unknown as { rawBody?: string }).rawBody ?? JSON.stringify(req.body ?? {});
-
-  console.log(
-    `[lasso] webhook-turn: signature debug — header=${sig.slice(0, 16)}... bodyLen=${rawBody.length}`
-  );
+  const ts = (req.headers["x-webhook-timestamp"] as string | undefined) ?? "";
+  const rawBody =
+    (req as unknown as { rawBody?: string }).rawBody ?? JSON.stringify(req.body ?? {});
 
   if (!sig.startsWith("sha256=")) {
     console.warn("[lasso] webhook-turn: missing/malformed signature header — allowing for now");
     return true;
   }
-  const provided = sig.slice("sha256=".length);
-  const expected = createHmac("sha256", shared.webhookSecret).update(rawBody).digest("hex");
-
-  if (expected !== provided) {
-    console.warn(
-      `[lasso] webhook-turn: signature mismatch (expected=${expected.slice(0, 16)}... got=${provided.slice(0, 16)}...) — allowing for now while we debug`
-    );
-    return true; // don't reject — we'll re-enable strict check once format confirmed
+  if (!ts) {
+    console.warn("[lasso] webhook-turn: missing X-Webhook-Timestamp — allowing for now");
+    return true;
+  }
+  const ageSecs = Math.abs(Date.now() / 1000 - parseInt(ts, 10));
+  if (Number.isNaN(ageSecs) || ageSecs > 300) {
+    console.warn(`[lasso] webhook-turn: timestamp out of range (${ageSecs}s) — allowing for now`);
+    return true;
   }
 
+  const provided = sig.slice("sha256=".length);
+  const signedString = `${ts}.${rawBody}`;
+  const expected = createHmac("sha256", shared.webhookSecret).update(signedString).digest("hex");
+
   try {
-    return timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(provided, "hex"));
+    const eq = timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(provided, "hex"));
+    if (!eq) {
+      console.warn(
+        `[lasso] webhook-turn: signature mismatch (expected=${expected.slice(0, 16)}... got=${provided.slice(0, 16)}...)`,
+      );
+    }
+    return eq;
   } catch {
-    return true;
+    return false;
   }
 }
 
