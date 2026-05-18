@@ -32,6 +32,7 @@ import { getLLM } from "../../clients/llm.js";
 import { getAgentPhone } from "../../clients/agentphone.js";
 import { getStore } from "../../clients/supabase.js";
 import { getSharedAgent } from "../../agents/shared-agent.js";
+import { env } from "../../clients/config.js";
 
 type CallEndedTranscriptTurn = { role?: string; content?: string };
 
@@ -713,15 +714,22 @@ async function sendCheckoutSms(args: {
     : "";
   const body = `${opener}! It's ${args.merchantName}. Resume your checkout here: ${link}.${couponLine}`;
 
+  // Route SMS through the iMessage line if configured. The voice line
+  // (+18154964627) needs 10DLC registration before /messages will accept
+  // anything. The iMessage shared line doesn't have that requirement and
+  // works immediately for whitelisted contacts — perfect for the demo.
+  // Voice continues to go via shared.numberId; only SMS shifts.
+  const smsNumberId = env.imessageNumberId ?? shared.numberId ?? undefined;
+  const channel = env.imessageNumberId ? "imessage" : "sms";
   console.log(
-    `[lasso] sendCheckoutSms: → agent=${shared.agentId} to=${args.toNumber} body="${body}"`,
+    `[lasso] sendCheckoutSms: → agent=${shared.agentId} via=${channel} to=${args.toNumber} body="${body}"`,
   );
   try {
     const res = await getAgentPhone().sendMessage({
       agentId: shared.agentId,
       toNumber: args.toNumber,
       body,
-      numberId: shared.numberId ?? undefined,
+      numberId: smsNumberId,
     });
     console.log(
       `[lasso] sendCheckoutSms: SMS sent to ${args.toNumber}, id=${res.id ?? "?"} status=${res.status ?? "?"}`,
@@ -730,6 +738,27 @@ async function sendCheckoutSms(args: {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[lasso] sendCheckoutSms: sendMessage threw — ${msg}`, err);
+    // If we tried iMessage and failed, retry once via the voice line so
+    // we don't silently drop the demo just because the iMessage route
+    // wasn't accepted by AgentPhone.
+    if (env.imessageNumberId && smsNumberId !== shared.numberId) {
+      console.warn(`[lasso] sendCheckoutSms: iMessage failed — retrying via voice line`);
+      try {
+        const res2 = await getAgentPhone().sendMessage({
+          agentId: shared.agentId,
+          toNumber: args.toNumber,
+          body,
+          numberId: shared.numberId ?? undefined,
+        });
+        console.log(
+          `[lasso] sendCheckoutSms: SMS sent via voice-line fallback, id=${res2.id ?? "?"} status=${res2.status ?? "?"}`,
+        );
+        return { ok: true, body };
+      } catch (err2) {
+        const msg2 = err2 instanceof Error ? err2.message : String(err2);
+        return { ok: false, error: `${msg} | voice-line retry: ${msg2}` };
+      }
+    }
     return { ok: false, error: msg };
   }
 }

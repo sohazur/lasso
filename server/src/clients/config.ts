@@ -12,6 +12,13 @@ export const env = {
   // Useful when AgentPhone's API is slow or down.
   sharedAgentId: process.env.LASSO_SHARED_AGENT_ID,
   sharedNumberId: process.env.LASSO_SHARED_NUMBER_ID,
+  // Separate number ID for SMS dispatch. The voice/SMS line +18154964627
+  // requires US carrier 10DLC registration (~$25 + 7-10 days) before
+  // /messages will accept POSTs. For the demo we route SMS through the
+  // shared iMessage line +17578314612 instead — it doesn't need 10DLC
+  // and works for whitelisted contacts (your demo phone is on the
+  // whitelist already).
+  imessageNumberId: process.env.LASSO_IMESSAGE_NUMBER_ID,
   // Pre-existing webhook secret from AgentPhone dashboard. When set, we
   // SKIP calling registerAgentWebhook() — re-registering generates a new
   // secret on AgentPhone's side, racing against any incoming webhook
