@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { onboardMerchant, getOnboardStatus } from "../agents/onboarding.js";
 import { getMoss } from "../clients/moss.js";
+import { getAgentPhone } from "../clients/agentphone.js";
 
 const OnboardBody = z.object({
   merchant_id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i, "alphanumeric + - _ only"),
@@ -54,4 +55,37 @@ export async function registerOnboardRoutes(app: FastifyInstance): Promise<void>
       }
     },
   );
+
+  // Admin: list AgentPhone agents — for finding the right ID when pinning
+  // LASSO_SHARED_AGENT_ID. Shows agent.id + agent.name so you can match
+  // against the dashboard.
+  app.get("/api/admin/agentphone/agents", async (_req, reply) => {
+    try {
+      const agents = await getAgentPhone().listAgents();
+      return reply.send({
+        agents: agents.map((a) => ({ id: a.id, name: a.name })),
+      });
+    } catch (err) {
+      return reply.code(500).send({ error: (err as Error).message });
+    }
+  });
+
+  // Admin: list AgentPhone numbers — for finding the right number ID when
+  // pinning LASSO_SHARED_NUMBER_ID. Shows phone, id, attached agent_id, and
+  // capabilities (sms/voice) so you can confirm +18154964627 is sms-capable.
+  app.get("/api/admin/agentphone/numbers", async (_req, reply) => {
+    try {
+      const numbers = await getAgentPhone().listNumbers();
+      return reply.send({
+        numbers: numbers.map((n) => ({
+          id: n.id,
+          phoneNumber: n.phoneNumber,
+          agentId: n.agentId ?? null,
+          type: n.type ?? null,
+        })),
+      });
+    } catch (err) {
+      return reply.code(500).send({ error: (err as Error).message });
+    }
+  });
 }
