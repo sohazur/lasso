@@ -113,14 +113,25 @@ async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
     await db.updateCall(call.id, { status: "connected" });
   }
 
-  // 2. Pull context from Supermemory + (optionally) live Moss lookup
+  // 2. Pull context from Supermemory + editable strategy + (optionally) live Moss lookup
   const mem = getMemory();
   const memTag = `merchant:${merchant.id}:context`;
   const privTag = `merchant:${merchant.id}:private`;
-  const [brandRecs, privRecs] = await Promise.all([mem.get(memTag), mem.get(privTag)]);
+
+  // Strategy slots (editable from /sarah). These are the load-bearing
+  // pieces — every call re-reads them, so dashboard edits take effect
+  // on the next turn with no restart.
+  const [brandRecs, privRecs, behavior, brandBrief, playbooksRaw] = await Promise.all([
+    mem.get(memTag),
+    mem.get(privTag),
+    db.getStrategySlot(merchant.id, "behavior"),
+    db.getStrategySlot(merchant.id, "brand_brief"),
+    db.getStrategySlot(merchant.id, "playbooks"),
+  ]);
 
   const brand = brandRecs[0]?.text ?? "";
   const priv = privRecs[0]?.text ?? "";
+  const playbook = pickPlaybook(playbooksRaw, call);
 
   // Try a Moss lookup against the customer's message if it seems like a question
   let kbChunks = "";
@@ -143,10 +154,33 @@ async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
     .map((h) => `${h.direction === "inbound" ? "Customer" : "You"}: ${h.content}`)
     .join("\n");
 
-  const system = `You are a recovery-call agent for ${merchant.name}. The customer just abandoned a checkout containing ${cartSummary} and you called them back. Respond conversationally, briefly (1-2 sentences). Use the context below to answer questions.
+  // The agent's BEHAVIOR (persona, voice, flow) comes from the editable
+  // strategy slot. If empty (new merchant, no seed), fall back to a generic
+  // one-liner so the prompt still makes sense.
+  const behaviorBlock = behavior?.trim()
+    ? behavior
+    : `You are a warm recovery-call agent for ${merchant.name}. Be brief. Help, don't sell.`;
 
-BRAND CONTEXT:
-${brand}
+  const playbookBlock = playbook
+    ? `LEADING HYPOTHESIS (from the playbook for "${playbook.key}"):\n- Concern: ${playbook.concern}\n- Probe: ${playbook.probe}\n- Suggested approach: ${playbook.approach}`
+    : "";
+
+  const brandBriefBlock = brandBrief?.trim()
+    ? `BRAND BRIEF (price norms, abandonment reasons, what this brand can flex on):\n${brandBrief}`
+    : "";
+
+  const system = `${behaviorBlock}
+
+CONTEXT FOR THIS CALL
+- Merchant: ${merchant.name}
+- Customer cart: ${cartSummary}
+- They just abandoned this checkout — you called them back.
+
+${playbookBlock}
+
+${brandBriefBlock}
+
+${brand ? `MERCHANT SITE BRIEFING:\n${brand}` : ""}
 
 ${priv ? `MERCHANT PRIVATE CONTEXT (use ONLY when relevant):\n${priv}\n` : ""}
 
@@ -317,4 +351,47 @@ function verifySignature(req: FastifyRequest): boolean {
   } catch {
     return true;
   }
+}
+
+/* ─── Playbook selection ─────────────────────────────────────────────────── */
+
+type Playbook = { concern: string; probe: string; approach: string };
+type PlaybookTree = {
+  by_exit_point?: Record<string, Playbook>;
+  overrides?: Record<string, Playbook>;
+  fallback?: string;
+};
+
+/**
+ * Pick the right playbook for this call. Heuristics:
+ *   1. If any override signal is true on the call → use that override.
+ *   2. Else infer exit_point from cart state and route to by_exit_point.
+ *   3. Else fall back to the tree's `fallback` (or order_review).
+ *
+ * For now we only have minimal cart info on the call row, so exit_point
+ * inference is crude. Future: the snippet sends `exit_point` explicitly
+ * based on which checkout step the customer was on at abandonment.
+ */
+function pickPlaybook(
+  raw: string | null,
+  call: { cart_lines?: unknown[] | null; cart_total_cents?: number | null }
+): (Playbook & { key: string }) | null {
+  if (!raw) return null;
+  let tree: PlaybookTree;
+  try {
+    tree = JSON.parse(raw) as PlaybookTree;
+  } catch {
+    return null;
+  }
+
+  const byExit = tree.by_exit_point ?? {};
+  const fallbackKey = tree.fallback ?? "order_review";
+
+  // Crude inference — refine later when the snippet passes exit_point through.
+  // For now: no cart at all → cart; cart but no total → cart; otherwise fall back.
+  const hasItems = (call.cart_lines?.length ?? 0) > 0;
+  const inferred = hasItems ? fallbackKey : "cart";
+
+  const pb = byExit[inferred] ?? byExit[fallbackKey];
+  return pb ? { ...pb, key: inferred } : null;
 }

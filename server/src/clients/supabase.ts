@@ -66,6 +66,10 @@ export interface DataStore {
   getCall(id: string): Promise<CallRow | null>;
   updateCall(id: string, patch: Partial<CallRow>): Promise<CallRow | null>;
   listCalls(merchantId?: string, limit?: number): Promise<CallRow[]>;
+
+  // Strategy slot CRUD — exact-key fetch, last-write-wins.
+  getStrategySlot(merchantId: string, slot: string): Promise<string | null>;
+  setStrategySlot(merchantId: string, slot: string, content: string): Promise<void>;
 }
 
 class SupabaseStore implements DataStore {
@@ -122,6 +126,23 @@ class SupabaseStore implements DataStore {
     if (error) throw error;
     return (data ?? []) as CallRow[];
   }
+
+  async getStrategySlot(merchantId: string, slot: string): Promise<string | null> {
+    const { data } = await this.client
+      .from("merchant_strategy")
+      .select("content")
+      .eq("merchant_id", merchantId)
+      .eq("slot", slot)
+      .maybeSingle();
+    return (data?.content as string | undefined) ?? null;
+  }
+
+  async setStrategySlot(merchantId: string, slot: string, content: string): Promise<void> {
+    const { error } = await this.client
+      .from("merchant_strategy")
+      .upsert({ merchant_id: merchantId, slot, content, updated_at: new Date().toISOString() });
+    if (error) throw error;
+  }
 }
 
 class MockStore implements DataStore {
@@ -164,6 +185,16 @@ class MockStore implements DataStore {
     );
     const filtered = merchantId ? all.filter((c) => c.merchant_id === merchantId) : all;
     return filtered.slice(0, limit);
+  }
+
+  private strategy = new Map<string, string>();
+
+  async getStrategySlot(merchantId: string, slot: string): Promise<string | null> {
+    return this.strategy.get(`${merchantId}:${slot}`) ?? null;
+  }
+
+  async setStrategySlot(merchantId: string, slot: string, content: string): Promise<void> {
+    this.strategy.set(`${merchantId}:${slot}`, content);
   }
 }
 

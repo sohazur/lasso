@@ -11,9 +11,11 @@ import { fileURLToPath } from "node:url";
 import { registerOnboardRoutes } from "./routes/onboard.js";
 import { registerCheckoutEventRoute } from "./routes/checkout-event.js";
 import { registerCallsRoutes } from "./routes/calls.js";
+import { registerStrategyRoutes } from "./routes/strategy.js";
 import { registerAgentPhoneWebhook } from "./routes/webhooks/agentphone.js";
 import { registerAgentPhoneTurnWebhook } from "./routes/webhooks/agentphone-turn.js";
 import { ensureSharedAgent } from "./agents/shared-agent.js";
+import { seedDefaultStrategy } from "./agents/seed-defaults.js";
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
 
@@ -90,6 +92,7 @@ app.get("/snippet.js", async (_req, reply) => {
 await registerOnboardRoutes(app);
 await registerCheckoutEventRoute(app);
 await registerCallsRoutes(app);
+await registerStrategyRoutes(app);
 await registerAgentPhoneWebhook(app);
 await registerAgentPhoneTurnWebhook(app);
 
@@ -101,4 +104,10 @@ app.log.info(`lasso server listening on :${port}`);
 // Done after listen() so health checks don't 500 during this potentially-slow step.
 ensureSharedAgent().catch((err) => {
   app.log.error({ err }, "shared-agent bootstrap failed");
+});
+
+// Seed default behavior/brand_brief/playbooks for the demo merchant the first
+// time the server boots. Non-destructive: only writes empty slots.
+seedDefaultStrategy().catch((err) => {
+  app.log.error({ err }, "seedDefaultStrategy failed");
 });

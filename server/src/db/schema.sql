@@ -54,6 +54,17 @@ create table if not exists stripe_attributions (
   created_at timestamptz default now()
 );
 
+-- Strategy slots — editable prompts + playbooks per merchant. Stored here
+-- (not Supermemory) because we need exact-key fetch with last-write-wins
+-- semantics; Supermemory's search is for fuzzy KB retrieval, not config.
+create table if not exists merchant_strategy (
+  merchant_id text not null references merchants(id),
+  slot text not null,
+  content text not null,
+  updated_at timestamptz default now(),
+  primary key (merchant_id, slot)
+);
+
 -- Seed the demo merchant
 insert into merchants (id, name, primary_domain)
 values ('demo', 'Lasso Demo Store', 'localhost:5500')
