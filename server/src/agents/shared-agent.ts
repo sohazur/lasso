@@ -33,24 +33,31 @@ export async function ensureSharedAgent(): Promise<SharedAgentInfo> {
   // Fast path: if .env tells us which agent + number to use, trust it and skip
   // the listAgents() round-trip. Useful when AgentPhone's API is slow or down.
   if (env.sharedAgentId) {
+    // If LASSO_SHARED_WEBHOOK_SECRET is set, trust it as the source of
+    // truth and skip the registerAgentWebhook() round-trip entirely.
+    // Re-registering generates a NEW secret on AgentPhone's side, racing
+    // against any in-flight delivery and leaving one side with a stale
+    // secret — which is what was 401-ing every turn.
     _shared = {
       agentId: env.sharedAgentId,
       numberId: env.sharedNumberId ?? null,
       phoneNumber: env.lassoPhoneNumber ?? null,
-      webhookSecret: null, // we'll register webhook lazily below if PUBLIC_URL is set
+      webhookSecret: env.sharedWebhookSecret ?? null,
     };
     console.log(
-      `[lasso] shared-agent: using env-configured agent=${_shared.agentId} number=${_shared.phoneNumber ?? "none"}`
+      `[lasso] shared-agent: using env-configured agent=${_shared.agentId} number=${_shared.phoneNumber ?? "none"} secret=${env.sharedWebhookSecret ? "pinned" : "will-register"}`,
     );
 
-    // Best-effort webhook re-register (don't block boot if it fails)
-    if (env.publicUrl?.startsWith("https://")) {
+    // Only call registerAgentWebhook if we DON'T have a pinned secret.
+    if (!env.sharedWebhookSecret && env.publicUrl?.startsWith("https://")) {
       const ap = getAgentPhone();
       const webhookUrl = `${env.publicUrl}/webhooks/agentphone-turn`;
       ap.registerAgentWebhook(_shared.agentId, { url: webhookUrl, contextLimit: 10 })
         .then((wh) => {
           _shared!.webhookSecret = wh.secret;
-          console.log(`[lasso] shared-agent: webhook registered at ${webhookUrl}`);
+          console.log(
+            `[lasso] shared-agent: webhook registered at ${webhookUrl} — set LASSO_SHARED_WEBHOOK_SECRET=${wh.secret} on Railway to make this stable across reboots`,
+          );
         })
         .catch((err) => {
           console.warn("[lasso] shared-agent: webhook registration failed (continuing)", err);

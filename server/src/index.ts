@@ -62,6 +62,15 @@ app.get("/health", async () => {
           numberId: shared.numberId,
           phoneNumber: shared.phoneNumber,
           webhook_secret_loaded: !!shared.webhookSecret,
+          // Last 6 chars of the secret so you can sanity-check that what
+          // we have matches what the AgentPhone dashboard shows, without
+          // exposing the full secret.
+          webhook_secret_tail: shared.webhookSecret
+            ? shared.webhookSecret.slice(-6)
+            : null,
+          webhook_secret_source: process.env.LASSO_SHARED_WEBHOOK_SECRET
+            ? "env_pinned"
+            : "auto_registered",
         }
       : null,
   };

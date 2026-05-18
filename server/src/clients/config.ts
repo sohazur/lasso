@@ -12,6 +12,11 @@ export const env = {
   // Useful when AgentPhone's API is slow or down.
   sharedAgentId: process.env.LASSO_SHARED_AGENT_ID,
   sharedNumberId: process.env.LASSO_SHARED_NUMBER_ID,
+  // Pre-existing webhook secret from AgentPhone dashboard. When set, we
+  // SKIP calling registerAgentWebhook() — re-registering generates a new
+  // secret on AgentPhone's side, racing against any incoming webhook
+  // delivery and leaving us with a mismatched secret on one side.
+  sharedWebhookSecret: process.env.LASSO_SHARED_WEBHOOK_SECRET,
 
   // Supermemory
   supermemoryKey: process.env.SUPERMEMORY_API_KEY,
