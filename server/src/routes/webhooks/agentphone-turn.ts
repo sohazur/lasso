@@ -84,8 +84,15 @@ export async function registerAgentPhoneTurnWebhook(app: FastifyInstance): Promi
     );
 
     // agent.call_ended is fire-and-forget — full final transcript + analysis.
+    // Catch internal errors so we always return 200 (AgentPhone retries on
+    // non-2xx, and we don't need them to retry — the row update is
+    // idempotent on our side anyway).
     if (ev.event === "agent.call_ended") {
-      await handleCallEnded(ev);
+      try {
+        await handleCallEnded(ev);
+      } catch (err) {
+        console.error("[lasso] call_ended: handler threw", err);
+      }
       return reply.send({ ok: true });
     }
 
@@ -633,16 +640,14 @@ function verifySignature(req: FastifyRequest): boolean {
   // Mock mode or webhook not registered: don't enforce
   if (!shared?.webhookSecret || shared.webhookSecret.startsWith("mock_")) return true;
 
-  // AgentPhone signs `${timestamp}.${rawBody}` with HMAC-SHA256, not the
-  // body alone. See docs: https://docs.agentphone.ai/.../webhooks#signatures
-  // We also enforce a 5-minute timestamp window to prevent replays.
+  // AgentPhone's signing formula (per the dashboard's own Python example):
+  //   expected = HMAC_SHA256(secret, raw_body).hexdigest()
+  //   compare to header value "sha256=<expected>"
+  // The raw body alone — NOT prefixed with a timestamp. The other AgentPhone
+  // doc page we followed earlier was wrong/outdated.
   const sig = (req.headers["x-webhook-signature"] as string | undefined) ?? "";
-  const ts = (req.headers["x-webhook-timestamp"] as string | undefined) ?? "";
   const rawBody = (req as unknown as { rawBody?: string }).rawBody;
   if (!rawBody) {
-    // No raw body captured — this is a fastify-raw-body wiring bug. Bail
-    // safely (allow) and log so we can fix it rather than reject every
-    // delivery as malformed.
     console.warn("[lasso] webhook-turn: rawBody is missing — allowing (fix rawBody plugin config)");
     return true;
   }
@@ -651,25 +656,15 @@ function verifySignature(req: FastifyRequest): boolean {
     console.warn("[lasso] webhook-turn: missing/malformed signature header — allowing for now");
     return true;
   }
-  if (!ts) {
-    console.warn("[lasso] webhook-turn: missing X-Webhook-Timestamp — allowing for now");
-    return true;
-  }
-  const ageSecs = Math.abs(Date.now() / 1000 - parseInt(ts, 10));
-  if (Number.isNaN(ageSecs) || ageSecs > 300) {
-    console.warn(`[lasso] webhook-turn: timestamp out of range (${ageSecs}s) — allowing for now`);
-    return true;
-  }
 
   const provided = sig.slice("sha256=".length);
-  const signedString = `${ts}.${rawBody}`;
-  const expected = createHmac("sha256", shared.webhookSecret).update(signedString).digest("hex");
+  const expected = createHmac("sha256", shared.webhookSecret).update(rawBody).digest("hex");
 
   try {
     const eq = timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(provided, "hex"));
     if (!eq) {
       console.warn(
-        `[lasso] webhook-turn: signature mismatch (expected=${expected.slice(0, 16)}... got=${provided.slice(0, 16)}...)`,
+        `[lasso] webhook-turn: signature mismatch (expected=${expected.slice(0, 16)}... got=${provided.slice(0, 16)}... bodyLen=${rawBody.length} secretTail=${shared.webhookSecret.slice(-6)})`,
       );
     }
     return eq;
