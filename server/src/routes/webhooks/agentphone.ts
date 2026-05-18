@@ -141,7 +141,7 @@ export async function registerAgentPhoneWebhook(app: FastifyInstance): Promise<v
 
     const patch: Parameters<typeof db.updateCall>[1] = {};
     if (status) patch.status = status;
-    if (typeof durationSecs === "number") patch.duration_secs = durationSecs;
+    if (typeof durationSecs === "number") patch.duration_secs = Math.round(durationSecs);
     if (transcript) patch.transcript = transcript;
     if (outcome) {
       const validOutcomes: CallOutcome[] = ["recovered", "declined", "unreachable", "error"];

@@ -249,7 +249,10 @@ async function handleCallEnded(ev: WebhookEvent): Promise<void> {
 
   await db.updateCall(call.id, {
     status: "completed",
-    duration_secs: ev.data.durationSeconds ?? call.duration_secs ?? null,
+    duration_secs:
+      typeof ev.data.durationSeconds === "number"
+        ? Math.round(ev.data.durationSeconds)
+        : call.duration_secs ?? null,
     transcript: transcript ?? call.transcript ?? null,
     ended_at: ev.data.endedAt ?? new Date().toISOString(),
   });
@@ -265,7 +268,10 @@ async function handleCallEnded(ev: WebhookEvent): Promise<void> {
         text: transcript,
         metadata: {
           call_id: call.id,
-          duration_secs: ev.data.durationSeconds ?? null,
+          duration_secs:
+            typeof ev.data.durationSeconds === "number"
+              ? Math.round(ev.data.durationSeconds)
+              : null,
           summary: ev.data.summary ?? null,
           sentiment: ev.data.userSentiment ?? null,
           ended_at: new Date().toISOString(),
