@@ -41,6 +41,7 @@ import { getAgentPhone } from "../../clients/agentphone.js";
 import {
   getStore,
   type CallRow,
+  type FounderDecision,
   type MerchantRow,
   type ObjectionType,
   type PendingActionType,
@@ -155,12 +156,12 @@ async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
   }
 
   // Branch on call kind. 'founder_approval' calls get a completely different
-  // prompt + action set (handled in a later commit on this branch). For now,
-  // bail with a placeholder so we don't try to apply the closer prompt to a
-  // founder call.
+  // prompt + action set: brief is already pre-loaded in pending_action_params
+  // (written by placeFounderCall), and the response shape is decision-oriented
+  // rather than action-oriented (approved | denied | callback | still_asking
+  // | hangup).
   if (call.kind === "founder_approval") {
-    console.log(`[lasso] webhook-turn: founder_approval call ${call.id} — handler arrives in a later commit`);
-    return { text: "Hi, this is a Lasso agent on behalf of your store. Standby.", hangup: false };
+    return handleFounderTurn(call, customerMessage);
   }
 
   const merchant = await db.getMerchant(call.merchant_id);
@@ -540,6 +541,172 @@ function normalizeObjection(raw: unknown): ObjectionType | null {
   if (typeof raw !== "string") return null;
   return VALID_OBJECTIONS.has(raw as ObjectionType) ? (raw as ObjectionType) : null;
 }
+
+// ═══ Founder-approval handler ═════════════════════════════════════════
+//
+// When notify_founder placed a second call, AgentPhone routes the founder's
+// inbound turns to the same /webhooks/agentphone-turn endpoint. We dispatch
+// here based on call.kind. The brief lives in pending_action_params (set
+// by placeFounderCall); the founder's first reply is to AgentPhone's
+// initial greeting brief, NOT to anything we said in this handler yet.
+
+type FounderTurn = {
+  text: string;
+  decision: FounderDecision | "still_asking" | "hangup";
+  note?: string | null;
+};
+
+async function handleFounderTurn(call: CallRow, founderMessage: string): Promise<TurnResponse> {
+  const db = getStore();
+
+  const brief = (call.pending_action_params ?? {}) as {
+    what_customer_wants?: string;
+    blocker?: string;
+    customer_call_id?: string;
+    customer_name?: string;
+    customer_phone?: string;
+  };
+
+  // Mark connected on first inbound turn
+  if (call.status !== "connected") {
+    await db.updateCall(call.id, { status: "connected" });
+  }
+
+  const system = buildFounderPrompt({
+    founderName: call.customer_name ?? "there",
+    merchantName: "your store", // we don't need to look up merchant — founder knows
+    customerName: brief.customer_name ?? "the customer",
+    whatCustomerWants: brief.what_customer_wants ?? "(no detail captured)",
+    blocker: brief.blocker ?? "(no detail captured)",
+    founderMessage,
+  });
+
+  let raw = "";
+  try {
+    raw = await getLLM().complete({ system, user: founderMessage, maxTokens: 200 });
+  } catch (err) {
+    console.error("[lasso] founder-turn: LLM failed", err);
+    return { text: "Thanks, I'll get back to the customer. Bye for now." };
+  }
+
+  const parsed = parseFounderTurnJson(raw);
+  console.log(`[lasso] founder-turn: LLM raw="${raw.slice(0, 200)}" parsed=${JSON.stringify(parsed)}`);
+
+  // Side effects per decision.
+  const text = parsed.text || "Got it, thanks.";
+
+  switch (parsed.decision) {
+    case "approved":
+    case "denied":
+    case "callback": {
+      // Record on the founder_approval row.
+      await db.updateCall(call.id, {
+        founder_decision: parsed.decision,
+        founder_decision_note: parsed.note ?? null,
+        status: "completed",
+        ended_at: new Date().toISOString(),
+        pending_action_type: null,
+        pending_action_params: null,
+        pending_action_set_at: null,
+      });
+      // Propagate to the linked customer call so the dashboard reflects
+      // the resolution against the original recovery attempt.
+      if (brief.customer_call_id) {
+        await db.updateCall(brief.customer_call_id, {
+          founder_decision: parsed.decision,
+          founder_decision_note: parsed.note ?? null,
+        });
+      }
+      console.log(
+        `[lasso] founder-turn: decision=${parsed.decision} note="${parsed.note ?? ""}" customer_call=${brief.customer_call_id ?? "?"}`
+      );
+      return { text, hangup: true };
+    }
+
+    case "hangup": {
+      // Founder ended the call without a clean decision. Record as null so
+      // the dashboard can surface "founder hung up — needs follow-up."
+      await db.updateCall(call.id, {
+        status: "completed",
+        ended_at: new Date().toISOString(),
+        pending_action_type: null,
+        pending_action_params: null,
+        pending_action_set_at: null,
+      });
+      return { text, hangup: true };
+    }
+
+    case "still_asking":
+    default:
+      // Need another turn — agent asks a clarifying question.
+      return { text };
+  }
+}
+
+function buildFounderPrompt(args: {
+  founderName: string;
+  merchantName: string;
+  customerName: string;
+  whatCustomerWants: string;
+  blocker: string;
+  founderMessage: string;
+}): string {
+  return `You are an outbound voice agent calling ${args.merchantName}'s owner (${args.founderName}) on behalf of Lasso. There's a customer (${args.customerName}) on a separate recovery call right now who can't complete their purchase.
+
+BRIEF (already spoken to the founder when they picked up):
+- Customer wants: ${args.whatCustomerWants}
+- Blocker: ${args.blocker}
+
+YOUR JOB: Capture the founder's verbal yes/no. Keep the call to 1-3 turns total. Then end gracefully.
+
+The founder just said: "${args.founderMessage}"
+
+═══ DECISION RULES ═══
+
+- Clear affirmative ("yes", "sure", "go ahead", "fine", "absolutely") → decision: "approved"
+- Clear refusal ("no", "can't", "won't", "not possible") → decision: "denied"
+- Needs to think / will call back ("let me check", "give me a minute", "I'll call back") → decision: "callback"
+- Ambiguous / off-topic / question back to you → decision: "still_asking" and ask a brief clarifying question
+- Founder hangs up or says "stop" → decision: "hangup"
+
+═══ RESPONSE FORMAT (JSON ONLY) ═══
+
+{
+  "text": "1 sentence to speak — brief acknowledgment + farewell if decision is final, or 1 clarifying question if still_asking",
+  "decision": "approved" | "denied" | "callback" | "still_asking" | "hangup",
+  "note": "optional one-liner with concrete detail — e.g. 'will add Belgium to shipping tonight' or 'order too custom, suggested they call retail'"
+}
+
+DON'T re-pitch — the brief is done. DON'T promise to text the customer yourself (a separate Lasso flow handles that). Just capture the decision and end the call.`;
+}
+
+function parseFounderTurnJson(raw: string): FounderTurn {
+  const trimmed = raw.trim();
+  const cleaned = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
+
+  try {
+    const obj = JSON.parse(cleaned) as Record<string, unknown>;
+    const decisionRaw = typeof obj.decision === "string" ? obj.decision : "still_asking";
+    const decision = VALID_FOUNDER_DECISIONS.has(decisionRaw as FounderTurn["decision"])
+      ? (decisionRaw as FounderTurn["decision"])
+      : "still_asking";
+    return {
+      text: typeof obj.text === "string" && obj.text ? obj.text : "Got it, thanks.",
+      decision,
+      note: typeof obj.note === "string" ? obj.note : null,
+    };
+  } catch {
+    return { text: trimmed.slice(0, 240) || "Got it, thanks.", decision: "still_asking" };
+  }
+}
+
+const VALID_FOUNDER_DECISIONS: ReadonlySet<FounderTurn["decision"]> = new Set([
+  "approved",
+  "denied",
+  "callback",
+  "still_asking",
+  "hangup",
+]);
 
 function summarizeCart(call: CallRow): string {
   const lines = call.cart_lines as Array<{ title?: string; qty?: number; price_cents?: number }> | undefined;
