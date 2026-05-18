@@ -41,7 +41,31 @@ app.addContentTypeParser("text/plain", { parseAs: "string" }, (_req, body, done)
   }
 });
 
-app.get("/health", async () => ({ ok: true, service: "lasso-server" }));
+app.get("/health", async () => {
+  // Surface key wiring so a quick curl shows whether the agent's webhook
+  // URL is pointing at this server (the most common drift bug — ngrok URLs
+  // get baked into AgentPhone and never updated when the server moves to
+  // Railway). Compare publicUrl below against the AgentPhone agent
+  // dashboard's Webhook URL field.
+  const { getSharedAgent } = await import("./agents/shared-agent.js");
+  const shared = getSharedAgent();
+  return {
+    ok: true,
+    service: "lasso-server",
+    publicUrl: process.env.PUBLIC_URL ?? null,
+    expected_webhook_url: process.env.PUBLIC_URL
+      ? `${process.env.PUBLIC_URL.replace(/\/$/, "")}/webhooks/agentphone-turn`
+      : null,
+    shared_agent: shared
+      ? {
+          agentId: shared.agentId,
+          numberId: shared.numberId,
+          phoneNumber: shared.phoneNumber,
+          webhook_secret_loaded: !!shared.webhookSecret,
+        }
+      : null,
+  };
+});
 
 // Serve the compiled snippet bundle so merchants can <script src=".../snippet.js">.
 // We cache the file in memory after the first read; the bundle is tiny (~15KB).
