@@ -160,9 +160,16 @@ INSTRUCTIONS:
     {"text": "Sending the link now.", "send_sms": true}  (we'll text them the checkout link)
 - Don't say more than 2 sentences per turn.
 - Don't invent coupon codes. Use only what's in the private context.
-- If the customer asks for the checkout link, set "send_sms": true and confirm warmly.
+- ALWAYS proactively offer the checkout link by SMS in the first 2 turns:
+  "Want me to text you the link so you can finish whenever?" — if the
+  customer says yes/sure/please/sounds good/etc, set "send_sms": true
+  and confirm warmly.
+- If the customer asks for the checkout link, set "send_sms": true.
 - If you can't help and the customer needs a human, use "action": "transfer".
-- If the customer says they're not interested or to stop, set "hangup": true.
+- ONLY set "hangup": true if the customer explicitly asks you to stop,
+  says they're not interested, or after you've sent them the SMS and
+  said goodbye. NEVER hang up on silence or because you don't know
+  what to say — ask a follow-up question instead.
 
 The most recent turns:
 ${history}
@@ -185,7 +192,12 @@ The customer just said: "${customerMessage}"`;
   // 5. Side effects (SMS) — do this BEFORE returning the response
   if (parsed.send_sms) {
     console.log(`[lasso] webhook-turn: send_sms=true, firing SMS to ${call.phone}`);
-    await sendCheckoutSmsBestEffort(merchant.id, call.phone, call.page_url, call.customer_name);
+    await sendCheckoutSmsBestEffort({
+      merchantName: merchant.name,
+      toNumber: call.phone,
+      pageUrl: call.page_url ?? null,
+      customerName: call.customer_name ?? null,
+    });
   }
 
   // 6. Translate to AgentPhone response shape
@@ -221,23 +233,42 @@ function parseTurnJson(raw: string): ParsedTurn {
   }
 }
 
-async function sendCheckoutSmsBestEffort(_merchantId: string, toNumber: string, pageUrl: string | null | undefined, name?: string | null): Promise<void> {
+async function sendCheckoutSmsBestEffort(args: {
+  merchantName: string;
+  toNumber: string;
+  pageUrl: string | null;
+  customerName: string | null;
+}): Promise<void> {
   const shared = getSharedAgent();
   if (!shared) {
     console.warn("[lasso] sendCheckoutSms: shared agent not initialized");
     return;
   }
-  const link = pageUrl || "(checkout link)";
-  const body = `${name ? `Hey ${name}, ` : ""}here's your checkout: ${link}`;
-  console.log(`[lasso] sendCheckoutSms: → agent=${shared.agentId} to=${toNumber} body="${body}"`);
+  // Page URL is captured from the snippet at abandonment time and points
+  // directly at the merchant's checkout route (e.g.
+  // https://saaya.netlify.app/checkout for the Saaya demo). No Stripe
+  // Checkout session needed — the customer resumes where they left off.
+  if (!args.pageUrl) {
+    console.warn("[lasso] sendCheckoutSms: no page_url on call row — skipping");
+    return;
+  }
+  const firstName = args.customerName?.split(/\s+/)[0];
+  const opener = firstName ? `Hi ${firstName}` : "Hey";
+  const body =
+    `${opener}! It's ${args.merchantName}. Here's your checkout link so you can finish whenever: ${args.pageUrl}`;
+  console.log(
+    `[lasso] sendCheckoutSms: → agent=${shared.agentId} to=${args.toNumber} body="${body}"`,
+  );
   try {
     const res = await getAgentPhone().sendMessage({
       agentId: shared.agentId,
-      toNumber,
+      toNumber: args.toNumber,
       body,
       numberId: shared.numberId ?? undefined,
     });
-    console.log(`[lasso] sendCheckoutSms: SMS sent to ${toNumber}, id=${res.id ?? "?"} status=${res.status ?? "?"}`);
+    console.log(
+      `[lasso] sendCheckoutSms: SMS sent to ${args.toNumber}, id=${res.id ?? "?"} status=${res.status ?? "?"}`,
+    );
   } catch (err) {
     console.error("[lasso] sendCheckoutSms: sendMessage threw", err);
   }

@@ -141,7 +141,7 @@ export async function triggerCall(event: AbandonmentEvent): Promise<{ call_id: s
         toNumber: snap.phone,
         fromNumberId: shared.numberId ?? undefined,
         systemPrompt,
-        initialGreeting: snap.name ? `Hi ${snap.name}, quick call about your checkout — got a sec?` : undefined,
+        initialGreeting: buildOpener(merchant.name, snap.name, snap.cart_lines),
         variables: {
           customer_name: snap.name ?? "there",
           cart_total:
@@ -178,6 +178,24 @@ export async function triggerCall(event: AbandonmentEvent): Promise<{ call_id: s
     });
     return { call_id: callRow.id, reason: msg };
   }
+}
+
+function buildOpener(
+  merchantName: string,
+  customerName?: string,
+  cartLines?: Array<{ title?: string; qty?: number; price_cents?: number }>,
+): string {
+  const firstName = customerName?.split(/\s+/)[0];
+  const greet = firstName ? `Hi ${firstName}` : "Hi there";
+  const item = cartLines?.[0]?.title;
+  const itemPhrase = item ? `the ${item}` : "the piece you were looking at";
+  const cartCount = cartLines?.length ?? 0;
+  const pieces =
+    cartCount > 1 ? ` and ${cartCount - 1} other piece${cartCount > 2 ? "s" : ""}` : "";
+  // Open warm, name the cart item, end with an open question so the
+  // customer has something specific to respond to. The previous version
+  // ("got a sec?") gave a yes/no out and the agent often hung up on silence.
+  return `${greet}, this is ${merchantName}. I saw you were just looking at ${itemPhrase}${pieces} on our site — is there anything I can help you figure out before you check out?`;
 }
 
 function secondsSince(ms?: number): number {
