@@ -180,6 +180,13 @@ class RealAgentPhoneClient implements AgentPhoneClient {
     }
     const text = await res.text();
     if (!res.ok) {
+      // Log the body we sent alongside the response so AgentPhone errors
+      // surface what's actually wrong — previously we only saw the
+      // response and had to guess what was rejected.
+      const bodyPreview = body ? JSON.stringify(body).slice(0, 400) : "(none)";
+      console.error(
+        `[lasso] agentphone ${method} ${path} ${res.status}\n  body sent: ${bodyPreview}\n  response: ${text.slice(0, 800)}`,
+      );
       throw new Error(`agentphone ${method} ${path} ${res.status}: ${text.slice(0, 600)}`);
     }
     return JSON.parse(text) as T;
