@@ -39,6 +39,15 @@ export async function triggerCall(event: AbandonmentEvent): Promise<{ call_id: s
     return { call_id: null, reason: "no_phone" };
   }
 
+  // Coerce to E.164 before doing anything else. AgentPhone requires the
+  // `+<country><digits>` form; checkout forms commonly split country code
+  // into a separate field that our snippet doesn't capture.
+  const e164 = toE164(snap.phone);
+  if (!e164) {
+    return { call_id: null, reason: `invalid_phone: ${snap.phone}` };
+  }
+  snap.phone = e164;
+
   // 1. Verify merchant is onboarded
   const merchant = await db.getMerchant(event.merchant_id);
   if (!merchant) {
@@ -179,6 +188,36 @@ function secondsSince(ms?: number): number {
 function normalizePhone(s: string): string {
   // For Supermemory tag use — digits only. The tag regex rejects '+'.
   return s.replace(/\D/g, "");
+}
+
+/**
+ * Coerce a raw phone string into E.164 (e.g. "+14155551234").
+ *
+ * Many checkout forms split the country code from the digits (Saaya does
+ * exactly this — a separate `<select>` with values like "+1"). The snippet
+ * only sees the digits-only `<input type="tel">`, so we receive a 10-digit
+ * NANP number and have to add the country code ourselves.
+ *
+ * Strategy:
+ *  - If it already starts with `+` and has 7+ digits → trust it.
+ *  - Else strip non-digits.
+ *  - If 10 digits → assume US/CA and prepend "+1" (NANP).
+ *  - If 11 digits starting with "1" → it's NANP, just prepend "+".
+ *  - Else prepend "+" as-is (assume the caller included a country code).
+ *
+ * Returns null if we can't produce something E.164-ish.
+ */
+export function toE164(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("+") && /\d{7,}/.test(trimmed.replace(/\D/g, ""))) {
+    return "+" + trimmed.replace(/\D/g, "");
+  }
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (digits.length >= 7 && digits.length <= 15) return `+${digits}`;
+  return null;
 }
 
 function cryptoRandomId(): string {
