@@ -100,27 +100,12 @@ async function seedOne(
   }
 }
 
-// Default coupon code we'll add to a merchant's private_context if they
-// don't have one set. The agent reads this on every call and may offer it.
-const DEFAULT_DISCOUNT_CODE = "LASSO15";
-
-async function ensureCoupon(merchantId: string): Promise<void> {
-  const db = getStore();
-  try {
-    const merchant = await db.getMerchant(merchantId);
-    if (!merchant) return;
-    const pc = (merchant.private_context ?? {}) as Record<string, unknown>;
-    const existing = pc["discount_code"] ?? pc["coupon"] ?? pc["coupon_code"];
-    if (typeof existing === "string" && existing.trim().length > 0) return;
-    const merged = { ...pc, discount_code: DEFAULT_DISCOUNT_CODE };
-    await db.updateMerchant(merchantId, { private_context: merged });
-    console.log(`[lasso] seed: set default discount_code=${DEFAULT_DISCOUNT_CODE} for ${merchantId}`);
-  } catch (err) {
-    console.warn(`[lasso] seed: ensureCoupon failed for ${merchantId} (continuing)`, err);
-  }
-}
-
 export async function seedDefaultStrategy(): Promise<void> {
+  // The coupon code is now embedded in sarah-brand-saaya.md (the brand_brief
+  // slot) as natural language under a clearly-labeled "Coupon code" section.
+  // The turn handler's pickDiscountCode reads from there, so the coupon
+  // lives next to the rest of the merchant's knowledge base — editable from
+  // /sarah, not hidden in a JSON column.
   const [behavior, brandBriefSaaya, playbooks] = await Promise.all([
     loadPrompt("sarah-behavior.md"),
     loadPrompt("sarah-brand-saaya.md"),
@@ -133,6 +118,5 @@ export async function seedDefaultStrategy(): Promise<void> {
       brandBrief: brandBriefSaaya,
       playbooks,
     });
-    await ensureCoupon(merchantId);
   }
 }

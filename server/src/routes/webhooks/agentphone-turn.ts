@@ -265,8 +265,11 @@ async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
 
   const customerFirstName = call.customer_name?.split(/\s+/)[0] ?? null;
 
-  // Coupon code (if the merchant pre-authorized one in their private context)
-  const couponCode = pickDiscountCode(merchant.private_context);
+  // Coupon code — searched across the knowledge-base text channels first
+  // (brand brief + private context records that the merchant can edit from
+  // /sarah), then fall back to the merchant.private_context DB column for
+  // legacy carriage.
+  const couponCode = pickDiscountCode(brandBrief, priv, brand, merchant.private_context);
   const couponBlock = couponCode
     ? `COUPON YOU MAY OFFER: "${couponCode}". Mention it ONCE if the customer hesitates on price or sounds price-sensitive — phrase it like a perk, not a hard sell. The SMS we send will include it automatically.`
     : "";
@@ -362,7 +365,9 @@ The customer just said: "${customerMessage}"`;
   // call hangs up. The agent's spoken response should promise the
   // text "as soon as we hang up".
   if (parsed.send_sms) {
-    const discountCode = pickDiscountCode(merchant.private_context);
+    // Same KB-first lookup as the in-prompt couponBlock so the SMS body
+    // and the agent's spoken offer stay consistent.
+    const discountCode = pickDiscountCode(brandBrief, priv, brand, merchant.private_context);
     queuePostCallSms(call.id, {
       merchantName: merchant.name,
       toNumber: call.phone,
@@ -425,10 +430,43 @@ async function dispatchQueuedSms(
   void merchantId;
 }
 
-function pickDiscountCode(pc: Record<string, unknown> | null | undefined): string | undefined {
-  if (!pc) return undefined;
-  const candidate = pc["discount_code"] ?? pc["coupon"] ?? pc["coupon_code"];
-  return typeof candidate === "string" && candidate.trim().length > 0 ? candidate.trim() : undefined;
+/**
+ * Pull a coupon code out of the merchant's knowledge-base text. The agent
+ * reads its brand briefing + private context (both Supermemory-backed) on
+ * every call; the coupon lives in there as natural language so the
+ * merchant can edit it in /sarah without touching DB columns. Recognises:
+ *   - "discount_code: LASSOXX" / "coupon: LASSOXX"
+ *   - "use code LASSOXX" / "code LASSOXX"
+ *   - lone tokens like LASSO15 / SAAYA10 / WELCOME20 in any text
+ * Falls back to the legacy private_context column for backwards-compat.
+ */
+function pickDiscountCode(
+  ...sources: Array<string | Record<string, unknown> | null | undefined>
+): string | undefined {
+  // Pattern 1: explicit key=value form ("discount_code: LASSO15", "code: LASSO15").
+  // The value must look like a coupon — uppercase token with 4+ chars total,
+  // so we don't match the literal word "code" in "code: LASSO15".
+  const labelled =
+    /(?:discount[_\s-]?code|coupon[_\s-]?code|coupon|promo[_\s-]?code|code)\s*[:=]\s*([A-Z][A-Z0-9_-]{3,24})\b/i;
+  // Pattern 2: lone uppercase token containing at least one digit (filters
+  // out plain words like "BRIDAL", "PAKISTAN") and 4+ chars long.
+  const bareCode = /\b([A-Z]{3,}\d{1,3}[A-Z0-9]{0,8})\b/;
+
+  for (const src of sources) {
+    if (!src) continue;
+    if (typeof src === "string") {
+      const m1 = src.match(labelled);
+      if (m1?.[1]) return m1[1].toUpperCase();
+      const m2 = src.match(bareCode);
+      if (m2?.[1]) return m2[1].toUpperCase();
+    } else if (typeof src === "object") {
+      const candidate = src["discount_code"] ?? src["coupon"] ?? src["coupon_code"];
+      if (typeof candidate === "string" && candidate.trim().length > 0) {
+        return candidate.trim().toUpperCase();
+      }
+    }
+  }
+  return undefined;
 }
 
 type ParsedTurn = {
