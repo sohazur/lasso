@@ -115,26 +115,42 @@ export async function registerAgentPhoneTurnWebhook(app: FastifyInstance): Promi
  * forever and the transcript card stays empty.
  */
 async function handleCallEnded(ev: WebhookEvent): Promise<void> {
-  const callerNumber = ev.data.from ?? "";
+  // For OUTBOUND calls (which is all Lasso recovery calls), AgentPhone
+  // reports its own line as `from` and the customer's number as `to`.
+  // Try both so phone-fallback lookup works either way.
+  const fromNum = ev.data.from ?? "";
+  const toNum = ev.data.to ?? "";
+  const candidateNumbers = [fromNum, toNum]
+    .map((n) => n.replace(/\D/g, ""))
+    .filter((n) => n.length >= 7);
   const agentphoneCallId = ev.data.callId ?? ev.data.conversationId;
   const db = getStore();
 
+  console.log(
+    `[lasso] call_ended: lookup agentphoneCallId=${agentphoneCallId} from=${fromNum} to=${toNum}`,
+  );
+
   // Try to find the row by AgentPhone callId first, then fall back to
-  // the most recent active call for this phone.
+  // the most recent active call for either side of the call (since
+  // outbound calls reverse the from/to direction).
   const recent = await db.listCalls(undefined, 50);
   let call =
     recent.find((c) => agentphoneCallId && c.agentphone_call_id === agentphoneCallId) ?? null;
   if (!call) {
-    const digits = callerNumber.replace(/\D/g, "");
     call =
       recent.find(
         (c) =>
-          c.phone.replace(/\D/g, "") === digits &&
+          candidateNumbers.includes(c.phone.replace(/\D/g, "")) &&
           (c.status === "ringing" || c.status === "connected"),
       ) ?? null;
+    if (call) {
+      console.log(`[lasso] call_ended: matched call ${call.id} via phone number fallback`);
+    }
   }
   if (!call) {
-    console.warn(`[lasso] call_ended: no matching call for ${agentphoneCallId ?? callerNumber}`);
+    console.warn(
+      `[lasso] call_ended: no matching call for agentphoneCallId=${agentphoneCallId} numbers=${candidateNumbers.join(",")}`,
+    );
     return;
   }
 
@@ -160,8 +176,10 @@ async function handleCallEnded(ev: WebhookEvent): Promise<void> {
   console.log(`[lasso] call_ended: persisted transcript (${transcript?.length ?? 0} chars) for call ${call.id}`);
 
   // Mirror transcript to Supermemory so the next call to this phone has it.
+  // Use the call row's phone (the actual customer number we placed the call
+  // to) rather than the event's `from` field, which is AgentPhone's line.
   if (transcript) {
-    const tag = `merchant:${call.merchant_id}:phone:${callerNumber.replace(/\D/g, "")}`;
+    const tag = `merchant:${call.merchant_id}:phone:${call.phone.replace(/\D/g, "")}`;
     try {
       await getMemory().store(tag, {
         text: transcript,
@@ -197,17 +215,25 @@ async function handleVoiceTurn(ev: WebhookEvent): Promise<TurnResponse> {
     "";
 
   // 1. Find the merchant from the most recent active call to this phone.
-  // (In production: persist conversationId → call_row_id at placeCall time.
-  // For now, find the latest preparing/ringing/connected call for this phone.)
+  // For outbound calls (all Lasso recovery calls) AgentPhone reports its
+  // own number as `from` and the customer's number as `to`. Try both.
+  const otherSide = ev.data.to ?? "";
+  const candidateDigits = [callerNumber, otherSide]
+    .map((n) => n.replace(/\D/g, ""))
+    .filter((n) => n.length >= 7);
+
   const db = getStore();
   const calls = await db.listCalls(undefined, 50);
-  const call = calls.find((c) =>
-    c.phone.replace(/\D/g, "") === callerNumber.replace(/\D/g, "") &&
-    (c.status === "ringing" || c.status === "connected" || c.status === "preparing")
+  const call = calls.find(
+    (c) =>
+      candidateDigits.includes(c.phone.replace(/\D/g, "")) &&
+      (c.status === "ringing" || c.status === "connected" || c.status === "preparing"),
   );
 
   if (!call) {
-    console.warn(`[lasso] webhook-turn: no active call found for ${callerNumber}`);
+    console.warn(
+      `[lasso] webhook-turn: no active call found (from=${callerNumber} to=${otherSide})`,
+    );
     return { text: "Sorry, I'm not sure why I called. Have a great day.", hangup: true };
   }
 

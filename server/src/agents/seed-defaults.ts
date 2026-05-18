@@ -136,23 +136,64 @@ async function seedOne(
   }
 }
 
+// Inline fallback playbooks — used if the file load failed (e.g. prompts
+// directory not in the runtime image). Slimmer than the full file but
+// covers the demo-critical case: customer says "too expensive" → agent
+// offers LASSO15.
+const FALLBACK_PLAYBOOKS = JSON.stringify(
+  {
+    by_exit_point: {
+      cart: {
+        concern: "uncertainty about whether the pieces are right",
+        probe: "wanted to see if you weren't sure about the pieces themselves",
+        approach:
+          "Offer a video consult or holding the items. Mention 14-day free returns. Do NOT offer discounts — discounts don't solve uncertainty.",
+      },
+      payment: {
+        concern: "the final total when you got to payment",
+        probe: "the total at the end gave you pause",
+        approach:
+          "Open with the LASSO15 first-time-customer 10% off — frame it like a perk, not a hard sell. If she's still hesitant, justify value softly. ALWAYS offer LASSO15 the first time price comes up.",
+      },
+      shipping_review: {
+        concern: "the shipping cost or timing",
+        probe: "the shipping was a bit high, or the timing wasn't quite right",
+        approach:
+          "Ask when she needs it. Offer free expedited shipping as a first-time-customer perk.",
+      },
+      order_review: {
+        concern: "last-second hesitation on the overall commitment",
+        probe: "you got to the very last step and just paused — was there something specific?",
+        approach:
+          "Listen carefully — could be price, fit, or just wanting more time. If vague, accept gracefully.",
+      },
+    },
+    fallback: "payment",
+  },
+  null,
+  2,
+);
+
 export async function seedDefaultStrategy(): Promise<void> {
   // The coupon code is now embedded in sarah-brand-saaya.md (the brand_brief
   // slot) as natural language under a clearly-labeled "Coupon code" section.
-  // The turn handler's pickDiscountCode reads from there, so the coupon
-  // lives next to the rest of the merchant's knowledge base — editable from
-  // /sarah, not hidden in a JSON column.
   const [behavior, brandBriefSaaya, playbooks] = await Promise.all([
     loadPrompt("sarah-behavior.md"),
     loadPrompt("sarah-brand-saaya.md"),
     loadPrompt("sarah-playbooks.json"),
   ]);
 
+  // Use inline fallback if file load missed (Railway image quirks etc).
+  const effectivePlaybooks = playbooks ?? FALLBACK_PLAYBOOKS;
+  if (!playbooks) {
+    console.warn(`[lasso] seed: playbooks file not found — using inline fallback (${effectivePlaybooks.length} chars)`);
+  }
+
   for (const merchantId of SEED_MERCHANTS) {
     await seedOne(merchantId, {
       behavior,
       brandBrief: brandBriefSaaya,
-      playbooks,
+      playbooks: effectivePlaybooks,
     });
   }
 }
