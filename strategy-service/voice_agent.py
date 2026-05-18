@@ -88,7 +88,7 @@ async def run_claude_with_tools(
     for _ in range(max_iterations):
         try:
             response = await _client.messages.create(
-                model="claude-sonnet-4-5",
+                model="claude-sonnet-4-5",   # Haiku regressed call quality; staying on Sonnet
                 max_tokens=400,
                 system=system_prompt,
                 tools=TOOLS,

@@ -71,13 +71,18 @@ async def abandon(request: Request):
     if not to_number:
         return {"status": "error", "error": "customer.phone missing"}
 
-    # Webhook mode: do NOT pass system_prompt to AgentPhone. The agent calls
-    # /api/voice on every turn and Claude drives the conversation. We still
-    # store system_prompt locally so the voice webhook can read it.
-    call_id = agentphone_client.place_call(
-        to_number=to_number,
-        opening_greeting=opening,
-    )
+    # Mode-aware call placement:
+    # - AGENT_VOICE_MODE=webhook → don't pass system_prompt; AgentPhone calls
+    #   /api/voice on every turn and Claude drives the conversation.
+    # - Otherwise (hosted, the safe default until ngrok + agent_setup.py have
+    #   been run) → pass system_prompt so AgentPhone's hosted LLM uses our
+    #   current prompt instead of falling back to the stale baked-in one.
+    _voice_mode = os.getenv("AGENT_VOICE_MODE", "hosted").lower()
+    place_call_kwargs = {"to_number": to_number, "opening_greeting": opening}
+    if _voice_mode != "webhook":
+        place_call_kwargs["system_prompt"] = system_prompt
+    call_id = agentphone_client.place_call(**place_call_kwargs)
+    log.info("call mode: %s", _voice_mode)
     log.info("call placed: %s → %s", call_id, to_number)
 
     # Dashboard reads `briefing` — keep the field name, populate from the
@@ -106,28 +111,55 @@ async def voice_webhook(request: Request):
     NDJSON streaming: an interim chunk first (so the caller hears something
     quickly), then the final Claude-generated text. If Claude calls the
     transfer_to_founder tool, the final chunk also carries action: "transfer".
+
+    AgentPhone only allows one webhook URL per agent, so this endpoint also
+    fans out non-voice events (e.g. `agent.call_ended`) to the matching
+    handler internally.
     """
     payload = await request.json()
+
+    # Route lifecycle events to the agentphone_webhook handler internally
+    # so we only need one URL registered with AgentPhone.
+    event_type = payload.get("type") or payload.get("event") or payload.get("event_type")
+    if event_type and event_type != "agent.message":
+        log.info("voice webhook: forwarding non-voice event '%s' to agentphone_webhook", event_type)
+        # Synthesize a Request-like object and re-dispatch.
+        class _R:
+            async def json(self_inner): return payload
+        return await agentphone_webhook(_R())
 
     if payload.get("channel") and payload.get("channel") != "voice":
         return {"ok": True}
 
     # Defensive call_id extraction across plausible payload shapes.
+    data = payload.get("data") or {}
     call_id = (
         payload.get("callId")
         or payload.get("call_id")
-        or (payload.get("data") or {}).get("callId")
-        or (payload.get("data") or {}).get("call_id")
+        or data.get("callId")
+        or data.get("call_id")
+        or data.get("id")
+        or (data.get("call") or {}).get("id")
+        or (data.get("call") or {}).get("callId")
     )
     if not call_id:
-        log.warning("voice webhook: no call_id in payload: %s", list(payload.keys()))
-        return {"text": "Sorry, give me one moment."}
+        # No call_id usually means this is a transcript-segment event or
+        # similar informational webhook — NOT a request for the agent to
+        # speak. Return silent ok so the agent doesn't say anything.
+        log.debug(
+            "voice webhook: no call_id — silent ignore. event=%r data keys=%s",
+            event_type,
+            list(data.keys()) if isinstance(data, dict) else type(data).__name__,
+        )
+        return {"ok": True}
 
     ctx = call_contexts.get(call_id)
     if not ctx:
-        log.warning("voice webhook: no context for call_id=%s — falling back", call_id)
-        # Don't break the call — provide a sane generic response.
-        return {"text": "Hi, this is Sarah from Saaya. How can I help?"}
+        log.warning("voice webhook: no context for call_id=%s — silent (server may have restarted)", call_id)
+        # Don't speak — just ack. Speaking a generic greeting here causes the
+        # weird "how can I help?" pattern when in-flight webhooks arrive
+        # without context (e.g. after a server reload mid-call).
+        return {"ok": True}
 
     # Build message history from AgentPhone's payload.
     recent = payload.get("recentHistory") or payload.get("recent_history") or []
@@ -344,6 +376,73 @@ async def call_log(limit: int = 20):
             "agent_name": c.agent_name,
         })
     return {"calls": out}
+
+
+@app.get("/api/leads")
+async def leads(limit: int = 100):
+    """Customer-first view: group recent calls by phone number.
+
+    Each lead has: phone, name (from call_contexts session if available),
+    email, total call count, last_seen, and the per-call list.
+    """
+    from agentphone import AgentPhone
+    client = AgentPhone(api_key=os.getenv("AGENTPHONE_API_KEY"))
+    try:
+        result = client.calls.list(limit=limit)
+    except Exception as e:
+        return {"error": str(e), "leads": []}
+    calls = result.data if hasattr(result, "data") else result
+
+    leads_map: dict[str, dict[str, Any]] = {}
+    for c in calls:
+        phone = c.to_number or "unknown"
+        if phone not in leads_map:
+            leads_map[phone] = {
+                "phone": phone,
+                "name": None,
+                "email": None,
+                "call_count": 0,
+                "last_started_at": None,
+                "calls": [],
+            }
+        lead = leads_map[phone]
+        lead["call_count"] += 1
+        if c.started_at and (not lead["last_started_at"] or c.started_at > lead["last_started_at"]):
+            lead["last_started_at"] = c.started_at
+
+        # Augment with customer details from call_contexts when available.
+        ctx = call_contexts.get(c.id, {}) or {}
+        session = ctx.get("session") or {}
+        customer = session.get("customer") or {}
+        if not lead["name"] and customer.get("name"):
+            lead["name"] = customer["name"]
+        if not lead["email"] and customer.get("email"):
+            lead["email"] = customer["email"]
+
+        # Per-call detail.
+        lead["calls"].append({
+            "id": c.id,
+            "status": c.status,
+            "duration_seconds": c.duration_seconds,
+            "started_at": c.started_at,
+            "ended_at": c.ended_at,
+            "has_pending_sms": bool(ctx.get("pending_sms")),
+            "sms_blocked": bool(ctx.get("sms_error")),
+            "cart_total": (session.get("cart") or {}).get("total"),
+            "playbook_concern": (ctx.get("playbook") or {}).get("concern"),
+        })
+
+    # Sort each lead's calls newest-first
+    for lead in leads_map.values():
+        lead["calls"].sort(key=lambda c: c["started_at"] or "", reverse=True)
+
+    # Sort leads by recency
+    leads_list = sorted(
+        leads_map.values(),
+        key=lambda l: l["last_started_at"] or "",
+        reverse=True,
+    )
+    return {"leads": leads_list}
 
 
 @app.get("/api/calls/latest")

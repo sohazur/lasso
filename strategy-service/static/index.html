@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Sarah — Cart Recovery Agent</title>
+<title>Lasso — Cart Recovery</title>
 <style>
   :root {
     --bg: #f6f1e6;
@@ -136,11 +136,49 @@
   .status-tag.failed { background: rgba(179,73,60,0.18); color: var(--bad); }
   .status-tag.none, .status-tag.unknown { background: rgba(122,107,90,0.18); color: var(--muted); }
 
+  /* Leads view */
+  .lead-card { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 0.55rem; overflow: hidden; background: var(--panel); }
+  .lead-card.open { border-color: var(--accent); box-shadow: 0 4px 14px rgba(184,116,74,0.08); }
+  .lead-row { display: grid; grid-template-columns: 38px 1fr auto auto; align-items: center; gap: 0.7rem; padding: 0.7rem 0.85rem; cursor: pointer; }
+  .lead-row:hover { background: #fbf8f1; }
+  .lead-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--bg); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.86rem; font-family: var(--serif); }
+  .lead-meta .lead-name { font-size: 0.92rem; font-weight: 600; color: var(--ink); }
+  .lead-meta .lead-sub { font-size: 0.72rem; color: var(--muted); margin-top: 0.1rem; }
+  .lead-counts { font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
+  .lead-chev { color: var(--muted); font-size: 0.9rem; padding-left: 0.4rem; }
+
+  .lead-calls { padding: 0.2rem 0 0.5rem 0; background: #fbf8f1; border-top: 1px solid var(--line); }
+  .call-entry { border-bottom: 1px solid var(--line); }
+  .call-entry:last-child { border-bottom: 0; }
+  .call-row { display: grid; grid-template-columns: 80px 200px 60px 1fr auto auto; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem 0.5rem 3.2rem; cursor: pointer; font-family: var(--mono); font-size: 0.72rem; }
+  .call-row:hover { background: rgba(0,0,0,0.02); }
+  .call-row .call-time { color: var(--muted); }
+  .call-row .call-dur { color: var(--ink); }
+  .call-row .call-concern { color: var(--muted); font-style: italic; }
+  .call-row .call-id-short { color: var(--muted); }
+  .badge { font-size: 0.62rem; padding: 0.1rem 0.45rem; border-radius: 3px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .badge.ok { background: rgba(74,135,98,0.18); color: var(--ok); }
+  .badge.bad { background: rgba(179,73,60,0.18); color: var(--bad); }
+
+  .call-detail { padding: 0.7rem 1.1rem 0.9rem 3.2rem; background: #f3eede; border-top: 1px dashed var(--line); }
+  .detail-label { font-size: 0.66rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin: 0.5rem 0 0.25rem; }
+  .detail-label:first-child { margin-top: 0; }
+
   .stub {
     background: rgba(196,122,29,0.1); border: 1px dashed var(--warn);
     color: var(--warn); padding: 0.6rem 0.9rem; border-radius: 5px;
     font-size: 0.8rem; margin-top: 0.6rem;
   }
+
+  pre.script-tag {
+    background: var(--ink); color: #f0e6d2;
+    padding: 0.75rem 0.9rem; border-radius: 5px;
+    font-family: var(--mono); font-size: 0.78rem; line-height: 1.4;
+    overflow-x: auto; white-space: nowrap;
+    margin: 0.5rem 0;
+  }
+  pre.script-tag::selection,
+  pre.script-tag *::selection { background: rgba(184,116,74,0.45); }
 
   .toast {
     position: fixed; bottom: 1.2rem; right: 1.2rem;
@@ -158,7 +196,7 @@
 <body>
 
 <header>
-  <div class="brand">Sarah <small>cart recovery agent · saya</small></div>
+  <div class="brand">Lasso <small>cart recovery · saya</small></div>
   <div class="status-pills">
     <span class="pill" id="server-pill">server …</span>
     <span class="pill" id="ap-pill">agentphone …</span>
@@ -171,7 +209,7 @@
     <div class="nav-item" data-section="brand">Brand brief <small>merchant context</small></div>
     <div class="nav-item" data-section="strategy">Strategy <small>concern → playbook</small></div>
     <div class="nav-item" data-section="behavior">Behavior <small>how Sarah talks</small></div>
-    <div class="nav-item" data-section="calls">Call log <small>recent activity</small></div>
+    <div class="nav-item" data-section="leads">Leads <small>people Sarah has called</small></div>
   </nav>
 
   <div class="content">
@@ -185,12 +223,20 @@
         <div class="desc">Saaya — already pointed at this dashboard via the lasso bridge.</div>
         <label>Site URL</label>
         <input type="url" id="site-url" value="https://saaya.netlify.app" />
-        <label>Dev site (used while testing)</label>
-        <input type="url" id="dev-url" value="http://localhost:5500" />
+        <input type="hidden" id="dev-url" value="http://localhost:5500" />
         <div class="btn-row">
           <button id="save-site-btn">Save</button>
-          <button class="subtle" id="open-site-btn">Open dev site ↗</button>
           <span class="save-info" id="site-save-info"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Drop-in script</h3>
+        <div class="desc">Paste this one line into the <code>&lt;head&gt;</code> of the merchant's site. Lasso handles the rest — checkout detection, abandonment capture, and the callback.</div>
+        <pre class="script-tag" id="script-tag-code">&lt;script src="https://lasso.io/snippet.js" data-merchant="saaya" async&gt;&lt;/script&gt;</pre>
+        <div class="btn-row">
+          <button id="copy-script-btn">Copy</button>
+          <span class="save-info" id="copy-info"></span>
         </div>
       </div>
 
@@ -252,26 +298,19 @@
       </div>
     </div>
 
-    <!-- CALL LOG -->
-    <div class="section" id="section-calls">
-      <h2>Call log</h2>
-      <div class="lead">Every call Sarah has made. Click any row to see the briefing she received and the live transcript.</div>
+    <!-- LEADS -->
+    <div class="section" id="section-leads">
+      <h2>Leads</h2>
+      <div class="lead">Every person Sarah has called. Click a lead to see all conversations with them. Click a conversation to see the briefing she received and the transcript.</div>
       <div class="card">
         <div class="btn-row" style="margin-bottom: 0.7rem;">
           <button id="test-call-btn" class="accent">Trigger test call</button>
           <button class="subtle" id="refresh-calls-btn">Refresh</button>
           <span class="save-info">Auto-refreshes every 4s</span>
         </div>
-        <table class="call-log">
-          <thead>
-            <tr>
-              <th>Time</th><th>To</th><th>Status</th><th>Duration</th><th>Call ID</th>
-            </tr>
-          </thead>
-          <tbody id="calls-tbody">
-            <tr><td colspan="5" style="text-align: center; color: var(--muted);">Loading…</td></tr>
-          </tbody>
-        </table>
+        <div id="leads-container">
+          <div style="padding: 1rem; text-align: center; color: var(--muted);">Loading…</div>
+        </div>
       </div>
     </div>
 
@@ -326,9 +365,24 @@
     $("site-save-info").textContent = "saved locally";
     toast("Saved", "ok");
   });
-  $("open-site-btn").addEventListener("click", () => {
-    window.open($("dev-url").value, "_blank");
+  $("copy-script-btn").addEventListener("click", async () => {
+    const text = $("script-tag-code").textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+      $("copy-info").textContent = "copied!";
+      toast("Script tag copied", "ok");
+      setTimeout(() => { $("copy-info").textContent = ""; }, 2000);
+    } catch (e) {
+      // Fallback for older browsers
+      const range = document.createRange();
+      range.selectNodeContents($("script-tag-code"));
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      toast("Selected — press ⌘+C", "ok");
+    }
   });
+
   (function loadSite() {
     const a = localStorage.getItem("lasso_site_url");
     const b = localStorage.getItem("lasso_dev_url");
@@ -434,54 +488,105 @@
   });
   $("strategy-revert-btn").addEventListener("click", () => { renderPlaybooks(); $("strategy-save-info").textContent = "reverted"; });
 
-  // ─── Call log ─────────────────────────────────────────────────────
+  // ─── Leads (people Sarah has called) ───────────────────────────────
+  const expandedLeads = new Set();
   const expandedCalls = new Set();
 
-  async function loadCalls() {
+  async function loadLeads() {
     try {
-      const r = await fetch("/api/call-log?limit=30");
+      const r = await fetch("/api/leads?limit=100");
       const data = await r.json();
-      const calls = data.calls || [];
-      if (!calls.length) {
-        $("calls-tbody").innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--muted);">No calls yet</td></tr>';
+      const leads = data.leads || [];
+      if (!leads.length) {
+        $("leads-container").innerHTML = '<div style="padding: 1rem; text-align: center; color: var(--muted);">No leads yet. Trigger a test call to see one appear.</div>';
         return;
       }
-      const rows = calls.map(c => {
-        const status = (c.status || "unknown").toLowerCase();
-        const dur = c.duration_seconds != null ? c.duration_seconds + "s" : "—";
-        const shortId = (c.id || "").slice(-10);
-        let row = `<tr class="row" data-call-id="${c.id}">
-          <td>${escapeHtml(fmtTime(c.started_at))}</td>
-          <td>${escapeHtml(c.to_number || "")}</td>
-          <td><span class="status-tag ${status}">${escapeHtml(status)}</span></td>
-          <td>${escapeHtml(dur)}</td>
-          <td>${escapeHtml(shortId)}</td>
-        </tr>`;
-        if (expandedCalls.has(c.id)) {
-          row += `<tr class="detail-row" data-detail-for="${c.id}"><td colspan="5"><div class="detail-content">Loading…</div></td></tr>`;
-        }
-        return row;
-      }).join("");
-      $("calls-tbody").innerHTML = rows;
-      document.querySelectorAll("#calls-tbody tr.row").forEach(tr => {
-        tr.addEventListener("click", () => toggleCallDetail(tr.dataset.callId));
+      const html = leads.map(renderLead).join("");
+      $("leads-container").innerHTML = html;
+      // attach handlers
+      document.querySelectorAll(".lead-row").forEach(el => {
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          toggleLead(el.dataset.phone);
+        });
       });
-      // re-render details for already-expanded calls
+      document.querySelectorAll(".call-row").forEach(el => {
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          toggleCall(el.dataset.callId);
+        });
+      });
+      // re-render expanded call details
       expandedCalls.forEach(id => renderCallDetail(id));
     } catch (e) {
-      $("calls-tbody").innerHTML = `<tr><td colspan="5" style="color: var(--bad);">Failed to load: ${escapeHtml(e.message)}</td></tr>`;
+      $("leads-container").innerHTML = `<div style="padding: 1rem; color: var(--bad);">Failed to load: ${escapeHtml(e.message)}</div>`;
     }
   }
-  async function toggleCallDetail(callId) {
-    if (expandedCalls.has(callId)) {
-      expandedCalls.delete(callId);
-    } else {
-      expandedCalls.add(callId);
+  function renderLead(lead) {
+    const phone = lead.phone || "unknown";
+    const name = lead.name || phone;
+    const initial = (name || "?").trim().charAt(0).toUpperCase();
+    const isOpen = expandedLeads.has(phone);
+    const chevron = isOpen ? "▾" : "▸";
+    const lastTime = lead.last_started_at ? fmtTime(lead.last_started_at) : "—";
+    const totalsLine = `${lead.call_count} call${lead.call_count === 1 ? "" : "s"} · last ${lastTime}`;
+    let callsHtml = "";
+    if (isOpen) {
+      const calls = (lead.calls || []);
+      callsHtml = `<div class="lead-calls">` + calls.map(c => renderCallEntry(c)).join("") + `</div>`;
     }
-    loadCalls();
+    return `
+      <div class="lead-card ${isOpen ? "open" : ""}">
+        <div class="lead-row" data-phone="${escapeHtml(phone)}">
+          <div class="lead-avatar">${escapeHtml(initial)}</div>
+          <div class="lead-meta">
+            <div class="lead-name">${escapeHtml(name)}</div>
+            <div class="lead-sub">
+              <span class="mono">${escapeHtml(phone)}</span>
+              ${lead.email ? ` · ${escapeHtml(lead.email)}` : ""}
+            </div>
+          </div>
+          <div class="lead-counts">${escapeHtml(totalsLine)}</div>
+          <div class="lead-chev">${chevron}</div>
+        </div>
+        ${callsHtml}
+      </div>
+    `;
+  }
+  function renderCallEntry(c) {
+    const status = (c.status || "unknown").toLowerCase();
+    const dur = c.duration_seconds != null ? c.duration_seconds + "s" : "—";
+    const isOpen = expandedCalls.has(c.id);
+    const concern = c.playbook_concern ? ` · ${c.playbook_concern}` : "";
+    const smsBadge = c.has_pending_sms
+      ? `<span class="badge ok">payment link queued</span>`
+      : (c.sms_blocked ? `<span class="badge bad">sms blocked</span>` : "");
+    return `
+      <div class="call-entry ${isOpen ? "open" : ""}">
+        <div class="call-row" data-call-id="${escapeHtml(c.id)}">
+          <span class="status-tag ${status}">${escapeHtml(status)}</span>
+          <span class="call-time">${escapeHtml(fmtTime(c.started_at))}</span>
+          <span class="call-dur">${escapeHtml(dur)}</span>
+          <span class="call-concern">${escapeHtml(concern)}</span>
+          ${smsBadge}
+          <span class="call-id-short mono">${escapeHtml((c.id || "").slice(-10))}</span>
+        </div>
+        ${isOpen ? `<div class="call-detail" data-detail-for="${escapeHtml(c.id)}"><div class="detail-content">Loading…</div></div>` : ""}
+      </div>
+    `;
+  }
+  function toggleLead(phone) {
+    if (expandedLeads.has(phone)) expandedLeads.delete(phone);
+    else expandedLeads.add(phone);
+    loadLeads();
+  }
+  function toggleCall(callId) {
+    if (expandedCalls.has(callId)) expandedCalls.delete(callId);
+    else expandedCalls.add(callId);
+    loadLeads();
   }
   async function renderCallDetail(callId) {
-    const row = document.querySelector(`tr.detail-row[data-detail-for="${callId}"] .detail-content`);
+    const row = document.querySelector(`.call-detail[data-detail-for="${callId}"] .detail-content`);
     if (!row) return;
     try {
       const [ctxRes, liveRes] = await Promise.all([
@@ -502,16 +607,16 @@
         }).join("");
       }
       row.innerHTML = `
-        <div style="font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.3rem;">Briefing</div>
+        <div class="detail-label">Briefing</div>
         <div class="briefing-box">${escapeHtml(briefing)}</div>
-        <div style="font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.3rem;">Transcript</div>
+        <div class="detail-label">Transcript</div>
         <div class="transcript">${transcriptHtml}</div>
       `;
     } catch (e) {
       row.innerHTML = `<div style="color: var(--bad);">Failed to load detail: ${escapeHtml(e.message)}</div>`;
     }
   }
-  $("refresh-calls-btn").addEventListener("click", loadCalls);
+  $("refresh-calls-btn").addEventListener("click", loadLeads);
   $("test-call-btn").addEventListener("click", async () => {
     $("test-call-btn").disabled = true;
     $("test-call-btn").textContent = "Placing…";
@@ -519,8 +624,8 @@
       const r = await fetch("/api/test-call", { method: "POST" });
       const data = await r.json();
       toast("Test call placed: " + (data.call_id || "?"), "ok");
-      // Switch to calls section and refresh
-      document.querySelector('.nav-item[data-section="calls"]').click();
+      document.querySelector('.nav-item[data-section="leads"]').click();
+      loadLeads();
     } catch (e) {
       toast("Test call failed: " + e.message, "bad");
     } finally {
@@ -528,8 +633,8 @@
       $("test-call-btn").textContent = "Trigger test call";
     }
   });
-  loadCalls();
-  setInterval(() => { if ($("section-calls").classList.contains("active")) loadCalls(); }, 4000);
+  loadLeads();
+  setInterval(() => { if ($("section-leads").classList.contains("active")) loadLeads(); }, 4000);
 </script>
 
 </body>
